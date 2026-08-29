@@ -48,7 +48,7 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - Feedback model, normalizer (reward ∈ [-1,1]), source weights
 - Persist raw feedback; compute weighted reward
 
-## Phase 7 — Utility Learning
+## Phase 7 — Utility Learning ✅
 
 - ExperienceUsage tracking
 - Attribution strategy interface (V1: score-proportional)

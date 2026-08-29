@@ -14,17 +14,36 @@ type EpisodeChecker interface {
 	EpisodeExists(ctx context.Context, tenantID, episodeID string) (bool, error)
 }
 
+// UtilityLearner applies episode rewards to experiences used by that episode.
+type UtilityLearner interface {
+	ApplyEpisodeReward(ctx context.Context, tenantID, episodeID string, episodeReward, confidence float64) ([]UtilityChange, error)
+}
+
+// UtilityChange is a compact learning result exposed on feedback submit.
+type UtilityChange struct {
+	ExperienceID string  `json:"experience_id"`
+	OldUtility   float64 `json:"old_utility"`
+	NewUtility   float64 `json:"new_utility"`
+	Credit       float64 `json:"credit"`
+}
+
 // Service collects, normalizes, and aggregates feedback.
 type Service struct {
 	repo     Repository
 	episodes EpisodeChecker
 	engine   *RewardEngine
+	learner  UtilityLearner // optional (Phase 7+)
 	now      func() time.Time
 	id       func() string
 }
 
 // NewService constructs a feedback service.
 func NewService(repo Repository, episodes EpisodeChecker, engine *RewardEngine) *Service {
+	return NewServiceWithLearner(repo, episodes, engine, nil)
+}
+
+// NewServiceWithLearner constructs a feedback service that can update experience utilities.
+func NewServiceWithLearner(repo Repository, episodes EpisodeChecker, engine *RewardEngine, learner UtilityLearner) *Service {
 	if engine == nil {
 		engine = NewRewardEngine(nil)
 	}
@@ -32,6 +51,7 @@ func NewService(repo Repository, episodes EpisodeChecker, engine *RewardEngine) 
 		repo:     repo,
 		episodes: episodes,
 		engine:   engine,
+		learner:  learner,
 		now:      time.Now().UTC,
 		id:       func() string { return uuid.NewString() },
 	}
@@ -50,8 +70,9 @@ type SubmitInput struct {
 
 // SubmitResult returns the persisted raw feedback and current episode aggregate.
 type SubmitResult struct {
-	Feedback      Feedback      `json:"feedback"`
-	EpisodeReward EpisodeReward `json:"episode_reward"`
+	Feedback       Feedback        `json:"feedback"`
+	EpisodeReward  EpisodeReward   `json:"episode_reward"`
+	UtilityUpdates []UtilityChange `json:"utility_updates,omitempty"`
 }
 
 // Submit validates, normalizes, persists raw feedback, then recomputes weighted reward.
@@ -107,7 +128,16 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 	if err != nil {
 		return SubmitResult{}, fmt.Errorf("aggregate reward for episode %s: %w", in.EpisodeID, err)
 	}
-	return SubmitResult{Feedback: created, EpisodeReward: agg}, nil
+
+	result := SubmitResult{Feedback: created, EpisodeReward: agg}
+	if s.learner != nil {
+		updates, learnErr := s.learner.ApplyEpisodeReward(ctx, in.TenantID, in.EpisodeID, agg.WeightedReward, confidence)
+		if learnErr != nil {
+			return SubmitResult{}, fmt.Errorf("apply utility learning for episode %s: %w", in.EpisodeID, learnErr)
+		}
+		result.UtilityUpdates = updates
+	}
+	return result, nil
 }
 
 // GetEpisodeReward recomputes weighted reward from all raw feedback.

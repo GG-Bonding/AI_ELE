@@ -11,12 +11,14 @@ import (
 	"time"
 
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/learning"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/logging"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
@@ -60,11 +62,18 @@ func run() error {
 	}
 
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
-	experienceSvc := experience.NewService(postgres.NewExperienceRepository(db))
-	feedbackSvc := feedback.NewService(
+	experienceRepo := postgres.NewExperienceRepository(db)
+	experienceSvc := experience.NewService(experienceRepo)
+	usageRepo := postgres.NewUsageRepository(db)
+	learnSvc, err := learning.New(usageRepo, experienceRepo, attribution.NewDefault())
+	if err != nil {
+		return fmt.Errorf("init learning service: %w", err)
+	}
+	feedbackSvc := feedback.NewServiceWithLearner(
 		postgres.NewFeedbackRepository(db),
 		episodeSvc,
 		feedback.NewRewardEngine(nil),
+		learning.FeedbackLearner{Inner: learnSvc},
 	)
 
 	opts := httpserver.Options{
@@ -113,10 +122,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init retriever: %w", err)
 		}
-		contextSvc, err := contextx.NewService(
+		contextSvc, err := contextx.NewServiceWithUsage(
 			retriever,
 			selector.New(selector.DefaultConfig()),
 			contextx.New(contextx.DefaultConfig()),
+			learning.Recorder{Inner: learnSvc},
 		)
 		if err != nil {
 			return fmt.Errorf("init context service: %w", err)

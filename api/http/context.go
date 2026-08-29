@@ -10,6 +10,7 @@ type contextRequest struct {
 	TenantID       string   `json:"tenant_id"`
 	AgentID        string   `json:"agent_id"`
 	UserID         string   `json:"user_id"`
+	EpisodeID      string   `json:"episode_id"`
 	Task           string   `json:"task"`
 	Tools          []string `json:"tools"`
 	MaxExperiences int      `json:"max_experiences"`
@@ -47,6 +48,7 @@ func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
 		TenantID:       req.TenantID,
 		AgentID:        req.AgentID,
 		UserID:         req.UserID,
+		EpisodeID:      req.EpisodeID,
 		Task:           req.Task,
 		Tools:          req.Tools,
 		MaxExperiences: req.MaxExperiences,

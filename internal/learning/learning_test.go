@@ -1,0 +1,181 @@
+package learning_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/learning"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
+)
+
+func TestSuccessRaisesUtilityAndChangesRanking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	usageRepo := experience.NewMemoryUsageRepository()
+	learnSvc, err := learning.New(usageRepo, expRepo, attribution.NewDefault())
+	if err != nil {
+		t.Fatalf("learning.New: %v", err)
+	}
+	embedder := &provider.MockEmbedding{Dim: 32}
+	retriever, err := retrieval.New(expSvc, embedder, retrieval.RankConfig{CandidateTopK: 10, DefaultTopK: 10})
+	if err != nil {
+		t.Fatalf("retriever: %v", err)
+	}
+	contextSvc, err := contextx.NewServiceWithUsage(
+		retriever,
+		selector.New(selector.DefaultConfig()),
+		contextx.New(contextx.DefaultConfig()),
+		learning.Recorder{Inner: learnSvc},
+	)
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	epSvc := episode.NewService(episode.NewMemoryRepository())
+	fbSvc := feedback.NewServiceWithLearner(
+		feedback.NewMemoryRepository(),
+		epSvc,
+		feedback.NewRewardEngine(nil),
+		learning.FeedbackLearner{Inner: learnSvc},
+	)
+
+	task := "create jira issue when project key unknown"
+	vec, _ := embedder.Embed(ctx, []string{task})
+	used, err := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger:    task,
+		Content:    "Resolve project key before create_issue",
+		Confidence: 0.9, Embedding: vec[0],
+	})
+	if err != nil {
+		t.Fatalf("create used: %v", err)
+	}
+	otherTask := "unrelated slack posting tip"
+	otherVec, _ := embedder.Embed(ctx, []string{otherTask})
+	other, err := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "slack",
+		Trigger: otherTask, Content: "Always set channel id",
+		Confidence: 0.9, Embedding: otherVec[0],
+	})
+	if err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+
+	ep, err := epSvc.CreateEpisode(ctx, episode.CreateEpisodeInput{
+		TenantID: "t", AgentID: "a", UserID: "u", Goal: "Create Jira issue",
+	})
+	if err != nil {
+		t.Fatalf("episode: %v", err)
+	}
+	if _, _, err := epSvc.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
+		TenantID: "t", EpisodeID: ep.ID, Status: episode.StatusSuccess,
+	}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	built, err := contextSvc.BuildContext(ctx, contextx.Request{
+		TenantID: "t", EpisodeID: ep.ID,
+		Task:  task,
+		Tools: []string{"jira"}, MaxExperiences: 5,
+	})
+	if err != nil {
+		t.Fatalf("BuildContext: %v", err)
+	}
+	if len(built.Context.Experiences) == 0 {
+		t.Fatalf("expected context experiences; selections=%#v", built.Selections)
+	}
+
+	before, err := expSvc.Get(ctx, "t", used.ID)
+	if err != nil {
+		t.Fatalf("get before: %v", err)
+	}
+	beforeRanked, err := retriever.Retrieve(ctx, retrieval.Query{
+		TenantID: "t", Task: task, Tools: []string{"jira"}, TopK: 5,
+	})
+	if err != nil {
+		t.Fatalf("retrieve before: %v", err)
+	}
+	beforeUsedScore := scoreOf(beforeRanked, used.ID)
+	beforeOtherScore := scoreOf(beforeRanked, other.ID)
+
+	reward := 1.0
+	res, err := fbSvc.Submit(ctx, feedback.SubmitInput{
+		TenantID: "t", EpisodeID: ep.ID, Source: "business", Reward: &reward, Confidence: 1,
+	})
+	if err != nil {
+		t.Fatalf("feedback: %v", err)
+	}
+	if len(res.UtilityUpdates) == 0 {
+		t.Fatalf("expected utility updates: %#v", res)
+	}
+	after, err := expSvc.Get(ctx, "t", used.ID)
+	if err != nil {
+		t.Fatalf("get after: %v", err)
+	}
+	if !(after.Utility > before.Utility) {
+		t.Fatalf("utility did not rise: before=%v after=%v updates=%#v", before.Utility, after.Utility, res.UtilityUpdates)
+	}
+
+	ranked, err := retriever.Retrieve(ctx, retrieval.Query{
+		TenantID: "t", Task: task, Tools: []string{"jira"}, TopK: 5,
+	})
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if len(ranked) == 0 || ranked[0].Experience.ID != used.ID {
+		t.Fatalf("expected used experience to rank first after learning: %#v", ranked)
+	}
+	afterUsedScore := scoreOf(ranked, used.ID)
+	afterOtherScore := scoreOf(ranked, other.ID)
+	if !(afterUsedScore > beforeUsedScore) {
+		t.Fatalf("used final score did not rise: before=%v after=%v", beforeUsedScore, afterUsedScore)
+	}
+	if !(afterUsedScore-afterOtherScore > beforeUsedScore-beforeOtherScore) {
+		t.Fatalf("ranking gap did not improve: before used=%v other=%v; after used=%v other=%v",
+			beforeUsedScore, beforeOtherScore, afterUsedScore, afterOtherScore)
+	}
+}
+
+func scoreOf(ranked []retrieval.RankedExperience, id string) float64 {
+	for _, r := range ranked {
+		if r.Experience.ID == id {
+			return r.Score.FinalScore
+		}
+	}
+	return 0
+}
+
+func TestFailureLowersUtility(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	usageRepo := experience.NewMemoryUsageRepository()
+	learnSvc, _ := learning.New(usageRepo, expRepo, attribution.NewDefault())
+	embedder := &provider.MockEmbedding{Dim: 16}
+	vec, _ := embedder.Embed(ctx, []string{"jira tip"})
+	exp, _ := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "jira tip", Content: "search project first", Confidence: 0.9, Embedding: vec[0],
+	})
+	_, _ = usageRepo.Create(ctx, experience.Usage{
+		ID: "u1", TenantID: "t", EpisodeID: "ep1", ExperienceID: exp.ID, FinalScore: 0.5,
+	})
+	before := exp.Utility
+	updates, err := learnSvc.ApplyEpisodeReward(ctx, "t", "ep1", -1.0, 1.0)
+	if err != nil {
+		t.Fatalf("ApplyEpisodeReward: %v", err)
+	}
+	if len(updates) != 1 || !(updates[0].NewUtility < before) {
+		t.Fatalf("%#v", updates)
+	}
+}

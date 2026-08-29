@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/learning"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 )
@@ -14,15 +15,26 @@ type Retriever interface {
 	Retrieve(ctx context.Context, q retrieval.Query) ([]retrieval.RankedExperience, error)
 }
 
+// UsageRecorder records which experiences entered context for an episode.
+type UsageRecorder interface {
+	RecordUsages(ctx context.Context, in learning.RecordInput) error
+}
+
 // Service orchestrates Retrieve → Select → Build for agent context.
 type Service struct {
 	retriever Retriever
 	selector  *selector.Selector
 	builder   *Builder
+	usages    UsageRecorder
 }
 
 // NewService constructs a context service.
 func NewService(retriever Retriever, sel *selector.Selector, builder *Builder) (*Service, error) {
+	return NewServiceWithUsage(retriever, sel, builder, nil)
+}
+
+// NewServiceWithUsage constructs a context service that can record experience usages.
+func NewServiceWithUsage(retriever Retriever, sel *selector.Selector, builder *Builder, usages UsageRecorder) (*Service, error) {
 	if retriever == nil {
 		return nil, fmt.Errorf("retriever is required")
 	}
@@ -32,7 +44,7 @@ func NewService(retriever Retriever, sel *selector.Selector, builder *Builder) (
 	if builder == nil {
 		return nil, fmt.Errorf("context builder is required")
 	}
-	return &Service{retriever: retriever, selector: sel, builder: builder}, nil
+	return &Service{retriever: retriever, selector: sel, builder: builder, usages: usages}, nil
 }
 
 // Request is a context build request.
@@ -40,6 +52,7 @@ type Request struct {
 	TenantID       string
 	AgentID        string
 	UserID         string
+	EpisodeID      string // optional; when set, KEEP/ABSTRACT context entries are tracked
 	Task           string
 	Tools          []string
 	MaxExperiences int
@@ -101,5 +114,21 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 	if err != nil {
 		return Response{}, fmt.Errorf("build context: %w", err)
 	}
+
+	if s.usages != nil && strings.TrimSpace(req.EpisodeID) != "" {
+		ids := make([]string, 0, len(payload.Experiences))
+		for _, item := range payload.Experiences {
+			ids = append(ids, item.Source)
+		}
+		if err := s.usages.RecordUsages(ctx, learning.RecordInput{
+			TenantID:   req.TenantID,
+			EpisodeID:  req.EpisodeID,
+			Selections: selected,
+			ContextIDs: ids,
+		}); err != nil {
+			return Response{}, fmt.Errorf("record experience usages for episode %s: %w", req.EpisodeID, err)
+		}
+	}
+
 	return Response{Context: payload, Selections: selected}, nil
 }
