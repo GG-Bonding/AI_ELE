@@ -11,6 +11,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -42,29 +43,53 @@ type ExperienceExtractor interface {
 	Extract(ctx context.Context, in extractor.ExtractInput) ([]experience.Candidate, error)
 }
 
+// ExperienceService is the subset of experience.Service used by HTTP handlers.
+type ExperienceService interface {
+	Get(ctx context.Context, tenantID, id string) (experience.Experience, error)
+}
+
+// ExperienceRetriever retrieves utility-ranked experiences for a task.
+type ExperienceRetriever interface {
+	Retrieve(ctx context.Context, q retrieval.Query) ([]retrieval.RankedExperience, error)
+}
+
+// ExperienceStorePipeline persists extracted candidates.
+type ExperienceStorePipeline interface {
+	StoreCandidates(ctx context.Context, tenantID, sourceEpisodeID string, candidates []experience.Candidate) (experience.StoreCandidatesResult, error)
+}
+
 // Server is the HTTP API surface.
 type Server struct {
-	logger    *slog.Logger
-	ready     ReadyChecker
-	episodes  EpisodeService
-	extractor ExperienceExtractor
-	mux       *http.ServeMux
+	logger        *slog.Logger
+	ready         ReadyChecker
+	episodes      EpisodeService
+	extractor     ExperienceExtractor
+	experiences   ExperienceService
+	retriever     ExperienceRetriever
+	storePipeline ExperienceStorePipeline
+	mux           *http.ServeMux
 }
 
 // Options configures optional server dependencies.
 type Options struct {
-	Episodes  EpisodeService
-	Extractor ExperienceExtractor
+	Episodes      EpisodeService
+	Extractor     ExperienceExtractor
+	Experiences   ExperienceService
+	Retriever     ExperienceRetriever
+	StorePipeline ExperienceStorePipeline
 }
 
 // New constructs an HTTP server with health and episode endpoints.
 func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 	s := &Server{
-		logger:    logger,
-		ready:     ready,
-		episodes:  opts.Episodes,
-		extractor: opts.Extractor,
-		mux:       http.NewServeMux(),
+		logger:        logger,
+		ready:         ready,
+		episodes:      opts.Episodes,
+		extractor:     opts.Extractor,
+		experiences:   opts.Experiences,
+		retriever:     opts.Retriever,
+		storePipeline: opts.StorePipeline,
+		mux:           http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -78,6 +103,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/episodes/{id}", s.handleGetEpisode)
 	s.mux.HandleFunc("POST /api/v1/episodes/{id}/attempts", s.handleAddAttempt)
 	s.mux.HandleFunc("POST /api/v1/episodes/{id}/outcome", s.handleCompleteOutcome)
+
+	s.mux.HandleFunc("GET /api/v1/experiences/{id}", s.handleGetExperience)
+	s.mux.HandleFunc("POST /api/v1/experiences/search", s.handleSearchExperiences)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

@@ -8,7 +8,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 ## Status
 
-**Phase 2** — Experience extraction from completed episodes (LLM + JSON Schema).
+**Phase 4** — Two-phase retrieval (semantic candidates + utility-aware ranking).
 
 See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md).
 

@@ -45,9 +45,10 @@ type completeOutcomeRequest struct {
 }
 
 type completeOutcomeResponse struct {
-	Episode              episode.Episode        `json:"episode"`
-	Outcome              episode.Outcome        `json:"outcome"`
-	ExperienceCandidates []experience.Candidate `json:"experience_candidates,omitempty"`
+	Episode              episode.Episode         `json:"episode"`
+	Outcome              episode.Outcome         `json:"outcome"`
+	ExperienceCandidates []experience.Candidate  `json:"experience_candidates,omitempty"`
+	StoredExperiences    []experience.Experience `json:"stored_experiences,omitempty"`
 }
 
 func (s *Server) handleCreateEpisode(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +194,25 @@ func (s *Server) handleCompleteOutcome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.ExperienceCandidates = candidates
+		if s.storePipeline != nil {
+			stored, storeErr := s.storePipeline.StoreCandidates(r.Context(), req.TenantID, ep.ID, candidates)
+			if storeErr != nil {
+				s.logger.Error("experience store failed",
+					slog.String("request_id", requestIDFrom(r.Context())),
+					slog.String("tenant_id", req.TenantID),
+					slog.String("episode_id", ep.ID),
+					slog.String("error", storeErr.Error()),
+				)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":                 storeErr.Error(),
+					"episode":               ep,
+					"outcome":               out,
+					"experience_candidates": candidates,
+				})
+				return
+			}
+			resp.StoredExperiences = stored.Stored
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, resp)

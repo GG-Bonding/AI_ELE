@@ -24,13 +24,13 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - JSON schema validation + one retry
 - Mock LLM unit tests → `[]ExperienceCandidate`
 
-## Phase 3 — Store + Retrieval
+## Phase 3 — Store + Retrieval ✅
 
 - Experience repository (pgvector embeddings)
 - Metadata filter + TopK vector similarity
 - OpenAI-compatible embedding provider
 
-## Phase 4 — Two-Phase Retrieval
+## Phase 4 — Two-Phase Retrieval ✅
 
 - Phase 1: semantic candidate set
 - Phase 2: utility-aware ranking  

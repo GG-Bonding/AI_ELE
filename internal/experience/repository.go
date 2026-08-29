@@ -1,0 +1,13 @@
+package experience
+
+import "context"
+
+// Repository persists experiences. No business logic beyond tenant-scoped CRUD/search.
+type Repository interface {
+	Create(ctx context.Context, exp Experience) (Experience, error)
+	Update(ctx context.Context, exp Experience) (Experience, error)
+	Get(ctx context.Context, tenantID, id string) (Experience, error)
+	Search(ctx context.Context, filter SearchFilter) ([]ScoredExperience, error)
+	Supersede(ctx context.Context, tenantID, oldID, newID string) error
+	Archive(ctx context.Context, tenantID, id string) error
+}

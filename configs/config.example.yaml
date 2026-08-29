@@ -19,3 +19,27 @@ llm:
   base_url: "https://api.openai.com/v1"
   api_key: ""
   model: "gpt-4o-mini"
+
+embedding:
+  enabled: false
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "text-embedding-3-small"
+  dimensions: 1536
+
+evaluator:
+  active_min: 0.65
+  candidate_min: 0.4
+
+retrieval:
+  candidate_top_k: 20
+  default_top_k: 20
+  default_lambda: 0.02
+  tool_scope_lambda: 0.05
+  type_lambda:
+    SEMANTIC: 0.005
+    PROCEDURAL: 0.05
+    EPISODIC: 0.03
+    FAILURE: 0.04
+    CONSTRAINT: 0.01
+    PREFERENCE: 0.02

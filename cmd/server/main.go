@@ -13,9 +13,11 @@ import (
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/logging"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -55,8 +57,13 @@ func run() error {
 	}
 
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
+	experienceSvc := experience.NewService(postgres.NewExperienceRepository(db))
 
-	opts := httpserver.Options{Episodes: episodeSvc}
+	opts := httpserver.Options{
+		Episodes:    episodeSvc,
+		Experiences: experienceSvc,
+	}
+
 	if cfg.LLM.Enabled {
 		llm, err := provider.NewOpenAICompatLLM(provider.OpenAICompatConfig{
 			BaseURL: cfg.LLM.BaseURL,
@@ -74,6 +81,34 @@ func run() error {
 		logger.Info("experience extraction enabled", "model", cfg.LLM.Model, "base_url", cfg.LLM.BaseURL)
 	} else {
 		logger.Info("experience extraction disabled")
+	}
+
+	if cfg.Embedding.Enabled {
+		embedder, err := provider.NewOpenAICompatEmbedding(provider.OpenAICompatEmbeddingConfig{
+			BaseURL:    cfg.Embedding.BaseURL,
+			APIKey:     cfg.Embedding.APIKey,
+			Model:      cfg.Embedding.Model,
+			Dimensions: cfg.Embedding.Dimensions,
+		})
+		if err != nil {
+			return fmt.Errorf("init embedding provider: %w", err)
+		}
+		pipeline, err := experience.NewStorePipeline(experienceSvc, embedder, experience.StorePipelineConfig{
+			ActiveMin:    cfg.Evaluator.ActiveMin,
+			CandidateMin: cfg.Evaluator.CandidateMin,
+		})
+		if err != nil {
+			return fmt.Errorf("init store pipeline: %w", err)
+		}
+		retriever, err := retrieval.New(experienceSvc, embedder, rankConfigFrom(cfg.Retrieval))
+		if err != nil {
+			return fmt.Errorf("init retriever: %w", err)
+		}
+		opts.StorePipeline = pipeline
+		opts.Retriever = retriever
+		logger.Info("experience retrieval enabled", "model", cfg.Embedding.Model, "dimensions", cfg.Embedding.Dimensions)
+	} else {
+		logger.Info("experience retrieval disabled")
 	}
 
 	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, opts)
@@ -110,4 +145,19 @@ func run() error {
 	}
 	logger.Info("server stopped")
 	return nil
+}
+
+func rankConfigFrom(cfg config.RetrievalConfig) retrieval.RankConfig {
+	rc := retrieval.DefaultRankConfig()
+	rc.CandidateTopK = cfg.CandidateTopK
+	rc.DefaultTopK = cfg.DefaultTopK
+	rc.DefaultLambda = cfg.DefaultLambda
+	rc.ToolScopeLambda = cfg.ToolScopeLambda
+	if len(cfg.TypeLambda) > 0 {
+		rc.TypeLambda = make(map[experience.Type]float64, len(cfg.TypeLambda))
+		for k, v := range cfg.TypeLambda {
+			rc.TypeLambda[experience.Type(k)] = v
+		}
+	}
+	return rc
 }

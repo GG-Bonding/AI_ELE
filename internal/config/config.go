@@ -11,10 +11,13 @@ import (
 
 // Config is the process configuration for Phase 0+.
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Log      LogConfig      `yaml:"log"`
-	LLM      LLMConfig      `yaml:"llm"`
+	Server    ServerConfig    `yaml:"server"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Log       LogConfig       `yaml:"log"`
+	LLM       LLMConfig       `yaml:"llm"`
+	Embedding EmbeddingConfig `yaml:"embedding"`
+	Evaluator EvaluatorConfig `yaml:"evaluator"`
+	Retrieval RetrievalConfig `yaml:"retrieval"`
 }
 
 type ServerConfig struct {
@@ -42,6 +45,30 @@ type LLMConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
 	Model   string `yaml:"model"`
+}
+
+// EmbeddingConfig configures an optional OpenAI-compatible embedding provider.
+type EmbeddingConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	BaseURL    string `yaml:"base_url"`
+	APIKey     string `yaml:"api_key"`
+	Model      string `yaml:"model"`
+	Dimensions int    `yaml:"dimensions"`
+}
+
+// EvaluatorConfig holds quality thresholds for storing extracted candidates.
+type EvaluatorConfig struct {
+	ActiveMin    float64 `yaml:"active_min"`
+	CandidateMin float64 `yaml:"candidate_min"`
+}
+
+// RetrievalConfig configures two-phase retrieval ranking.
+type RetrievalConfig struct {
+	CandidateTopK   int                `yaml:"candidate_top_k"`
+	DefaultTopK     int                `yaml:"default_top_k"`
+	DefaultLambda   float64            `yaml:"default_lambda"`
+	ToolScopeLambda float64            `yaml:"tool_scope_lambda"`
+	TypeLambda      map[string]float64 `yaml:"type_lambda"`
 }
 
 // Load reads YAML from path and applies environment overrides.
@@ -96,6 +123,30 @@ func (c *Config) applyDefaults() {
 	if c.LLM.Model == "" {
 		c.LLM.Model = "gpt-4o-mini"
 	}
+	if c.Embedding.Model == "" {
+		c.Embedding.Model = "text-embedding-3-small"
+	}
+	if c.Embedding.Dimensions == 0 {
+		c.Embedding.Dimensions = 1536
+	}
+	if c.Evaluator.ActiveMin == 0 {
+		c.Evaluator.ActiveMin = 0.65
+	}
+	if c.Evaluator.CandidateMin == 0 {
+		c.Evaluator.CandidateMin = 0.4
+	}
+	if c.Retrieval.CandidateTopK == 0 {
+		c.Retrieval.CandidateTopK = 20
+	}
+	if c.Retrieval.DefaultTopK == 0 {
+		c.Retrieval.DefaultTopK = 20
+	}
+	if c.Retrieval.DefaultLambda == 0 {
+		c.Retrieval.DefaultLambda = 0.02
+	}
+	if c.Retrieval.ToolScopeLambda == 0 {
+		c.Retrieval.ToolScopeLambda = 0.05
+	}
 }
 
 func (c *Config) applyEnvOverrides() {
@@ -119,6 +170,18 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("AEE_LLM_MODEL"); v != "" {
 		c.LLM.Model = v
+	}
+	if v := os.Getenv("AEE_EMBEDDING_ENABLED"); v != "" {
+		c.Embedding.Enabled = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("AEE_EMBEDDING_BASE_URL"); v != "" {
+		c.Embedding.BaseURL = v
+	}
+	if v := os.Getenv("AEE_EMBEDDING_API_KEY"); v != "" {
+		c.Embedding.APIKey = v
+	}
+	if v := os.Getenv("AEE_EMBEDDING_MODEL"); v != "" {
+		c.Embedding.Model = v
 	}
 }
 
@@ -144,6 +207,20 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.LLM.Model) == "" {
 			return fmt.Errorf("llm.model is required when llm.enabled is true")
 		}
+	}
+	if c.Embedding.Enabled {
+		if strings.TrimSpace(c.Embedding.BaseURL) == "" {
+			return fmt.Errorf("embedding.base_url is required when embedding.enabled is true")
+		}
+		if strings.TrimSpace(c.Embedding.Model) == "" {
+			return fmt.Errorf("embedding.model is required when embedding.enabled is true")
+		}
+		if c.Embedding.Dimensions <= 0 {
+			return fmt.Errorf("embedding.dimensions must be > 0")
+		}
+	}
+	if c.Evaluator.ActiveMin < c.Evaluator.CandidateMin {
+		return fmt.Errorf("evaluator.active_min must be >= evaluator.candidate_min")
 	}
 	return nil
 }
