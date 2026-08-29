@@ -48,6 +48,7 @@ type ExperienceExtractor interface {
 // ExperienceService is the subset of experience.Service used by HTTP handlers.
 type ExperienceService interface {
 	Get(ctx context.Context, tenantID, id string) (experience.Experience, error)
+	Supersede(ctx context.Context, tenantID, oldID, newID string) error
 }
 
 // ExperienceRetriever retrieves utility-ranked experiences for a task.
@@ -125,6 +126,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/v1/experiences/{id}", s.handleGetExperience)
 	s.mux.HandleFunc("POST /api/v1/experiences/search", s.handleSearchExperiences)
+	s.mux.HandleFunc("POST /api/v1/experiences/{id}/supersede", s.handleSupersedeExperience)
 	s.mux.HandleFunc("POST /api/v1/context", s.handleBuildContext)
 
 	s.mux.HandleFunc("POST /api/v1/feedback", s.handleSubmitFeedback)

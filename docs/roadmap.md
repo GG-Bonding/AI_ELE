@@ -55,10 +55,10 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - Beta-style utility update
 - E2E: success ↑ utility, failure ↓ utility, ranking changes
 
-## Phase 8 — Supersession + Decay
+## Phase 8 — Supersession + Decay ✅
 
 - Supersede API; deprecated excluded from retrieval
-- Freshness decay (type-specific λ)
+- Freshness decay (type-specific λ; age from LastUsedAt)
 - Evolution interface: Supersede + Decay only
 
 ## Phase 9 — SDKs

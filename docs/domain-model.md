@@ -50,8 +50,12 @@ quality = confidence × outcomeWeight × reusability × specificity
 weightedReward = Σ(w×c×r) / Σ(w×c)
 utility = α / (α + β)   # α,β start at 1; update with signed reward × confidence
 FinalScore = Similarity × Utility × Confidence × Freshness × ScopeMatch
-Freshness = exp(-λ × ageDays)   # λ by experience type
+Freshness = exp(-λ × ageDays)   # λ by type; age from LastUsedAt (else UpdatedAt)
 ```
+
+## Supersession
+
+`B` supersedes `A`: `A.status = DEPRECATED`, `B.supersedes_id = A.id`. Default retrieval excludes `DEPRECATED` / `BLOCKED` / `ARCHIVED`.
 
 ## Security Note
 

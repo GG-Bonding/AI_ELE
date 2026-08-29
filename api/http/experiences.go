@@ -48,6 +48,42 @@ func (s *Server) handleGetExperience(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, exp)
 }
 
+type supersedeExperienceRequest struct {
+	TenantID      string `json:"tenant_id"`
+	ReplacementID string `json:"replacement_id"`
+}
+
+func (s *Server) handleSupersedeExperience(w http.ResponseWriter, r *http.Request) {
+	if s.experiences == nil {
+		writeError(w, http.StatusServiceUnavailable, "experience service not configured")
+		return
+	}
+	var req supersedeExperienceRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	oldID := r.PathValue("id")
+	if err := s.experiences.Supersede(r.Context(), req.TenantID, oldID, req.ReplacementID); err != nil {
+		s.writeExperienceError(w, r, err)
+		return
+	}
+	oldExp, err := s.experiences.Get(r.Context(), req.TenantID, oldID)
+	if err != nil {
+		s.writeExperienceError(w, r, err)
+		return
+	}
+	newExp, err := s.experiences.Get(r.Context(), req.TenantID, req.ReplacementID)
+	if err != nil {
+		s.writeExperienceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deprecated":  oldExp,
+		"replacement": newExp,
+	})
+}
+
 func (s *Server) handleSearchExperiences(w http.ResponseWriter, r *http.Request) {
 	if s.retriever == nil {
 		writeError(w, http.StatusServiceUnavailable, "experience retrieval not configured")

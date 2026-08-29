@@ -72,6 +72,26 @@ func TestFreshnessSemanticDecaysSlowerThanProcedural(t *testing.T) {
 	}
 }
 
+func TestFreshnessUsesLastUsedAtForUnusedDecay(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	cfg := retrieval.DefaultRankConfig()
+	usedRecently := now.Add(-24 * time.Hour)
+	usedLongAgo := now.Add(-90 * 24 * time.Hour)
+	// UpdatedAt is recent (e.g. utility update) but LastUsedAt is stale → still decays.
+	stale := experience.Experience{
+		Type: experience.TypeProcedural, Scope: experience.ScopeTool,
+		UpdatedAt: now, LastUsedAt: &usedLongAgo,
+	}
+	fresh := experience.Experience{
+		Type: experience.TypeProcedural, Scope: experience.ScopeTool,
+		UpdatedAt: now, LastUsedAt: &usedRecently,
+	}
+	if !(retrieval.Freshness(fresh, cfg, now) > retrieval.Freshness(stale, cfg, now)) {
+		t.Fatalf("recently used should be fresher than long-unused")
+	}
+}
+
 func TestScopeMatchToolBonus(t *testing.T) {
 	t.Parallel()
 	exp := experience.Experience{Scope: experience.ScopeTool, ScopeKey: "jira"}

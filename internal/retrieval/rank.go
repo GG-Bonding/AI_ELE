@@ -118,9 +118,12 @@ func scoreOne(c experience.ScoredExperience, scope ScopeContext, cfg RankConfig,
 }
 
 // Freshness ∈ [0,1] = exp(-λ × ageDays).
+// Age is measured from LastUsedAt when set (unused experiences decay), else UpdatedAt/CreatedAt.
 func Freshness(exp experience.Experience, cfg RankConfig, now time.Time) float64 {
 	ref := exp.UpdatedAt
-	if ref.IsZero() {
+	if exp.LastUsedAt != nil && !exp.LastUsedAt.IsZero() {
+		ref = *exp.LastUsedAt
+	} else if ref.IsZero() {
 		ref = exp.CreatedAt
 	}
 	if ref.IsZero() {

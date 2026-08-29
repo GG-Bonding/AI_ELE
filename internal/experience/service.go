@@ -145,6 +145,26 @@ func (s *Service) Search(ctx context.Context, in SearchInput) ([]ScoredExperienc
 	return results, nil
 }
 
+// Supersede marks oldID as DEPRECATED and links newID.supersedes_id = oldID.
+func (s *Service) Supersede(ctx context.Context, tenantID, oldID, newID string) error {
+	if err := requireNonEmpty("tenant_id", tenantID, "old_id", oldID, "replacement_id", newID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(oldID) == strings.TrimSpace(newID) {
+		return fmt.Errorf("%w: old and replacement ids must differ", ErrInvalidInput)
+	}
+	if _, err := s.repo.Get(ctx, tenantID, oldID); err != nil {
+		return fmt.Errorf("get superseded experience %s: %w", oldID, err)
+	}
+	if _, err := s.repo.Get(ctx, tenantID, newID); err != nil {
+		return fmt.Errorf("get replacement experience %s: %w", newID, err)
+	}
+	if err := s.repo.Supersede(ctx, tenantID, oldID, newID); err != nil {
+		return fmt.Errorf("supersede experience %s with %s: %w", oldID, newID, err)
+	}
+	return nil
+}
+
 // StatusFromConfidence applies V1 evaluator thresholds to candidates before store.
 func StatusFromConfidence(confidence, activeMin, candidateMin float64) (Status, bool) {
 	if confidence >= activeMin {
