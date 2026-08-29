@@ -66,11 +66,13 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - Go SDK + Python SDK
 - Examples for episode → context → feedback loop
 
-## Phase 10 — Evaluation
+## Phase 10 — Evaluation ✅
 
 Four arms: Baseline / Raw Retrieval / Utility Retrieval / Utility + Learning  
-Metrics: success rate, precision, utilization, avg utility, negative transfer, tokens, latency
+Metrics: success rate, precision, utilization, avg utility, negative transfer, tokens, latency  
+Core E2E: Jira project-key learning loop (three tasks)
 
 ## V1 Definition of Done
 
 See product prompt §三十八. Core proof is the Jira project-key learning loop (three tasks).
+See [docs/evaluation.md](evaluation.md).

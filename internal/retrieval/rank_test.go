@@ -121,6 +121,26 @@ func TestFinalScoreIsProductOfComponents(t *testing.T) {
 	}
 }
 
+func TestRankBySimilarityIgnoresUtility(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	highUtil := experience.ScoredExperience{
+		Similarity: 0.8,
+		Experience: experience.Experience{ID: "b_high_util", Utility: 0.99, UpdatedAt: now},
+	}
+	higherSim := experience.ScoredExperience{
+		Similarity: 0.9,
+		Experience: experience.Experience{ID: "a_low_util", Utility: 0.1, UpdatedAt: now},
+	}
+	ranked := retrieval.RankBySimilarity([]experience.ScoredExperience{highUtil, higherSim})
+	if ranked[0].Experience.ID != "a_low_util" {
+		t.Fatalf("want similarity winner first, got %+v", ranked)
+	}
+	if ranked[0].Score.FinalScore != 0.9 {
+		t.Fatalf("final=%v", ranked[0].Score.FinalScore)
+	}
+}
+
 func abs(v float64) float64 {
 	if v < 0 {
 		return -v

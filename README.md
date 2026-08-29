@@ -8,7 +8,9 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 ## Status
 
-**Phase 9** — Go + Python SDKs (`sdk/go`, `sdk/python`).
+**Phase 10** — Evaluation harness (four arms + Jira learning-loop E2E).
+
+V1 core loop is complete. See [docs/evaluation.md](docs/evaluation.md).
 
 See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md).
 
@@ -64,6 +66,12 @@ EXPERIENCE_ENGINE_URL=http://localhost:8080 go run ./sdk/go/example
 
 # Python
 cd sdk/python && pip install -e . && python examples/jira_loop.py
+```
+
+### Evaluation
+
+```bash
+make test-eval
 ```
 
 ## License

@@ -100,6 +100,32 @@ func Rank(candidates []experience.ScoredExperience, scope ScopeContext, cfg Rank
 	return out
 }
 
+// RankBySimilarity orders candidates by Similarity only (raw retrieval arm).
+func RankBySimilarity(candidates []experience.ScoredExperience) []RankedExperience {
+	out := make([]RankedExperience, 0, len(candidates))
+	for _, c := range candidates {
+		sim := clamp01(c.Similarity)
+		out = append(out, RankedExperience{
+			Experience: c.Experience,
+			Score: ScoreBreakdown{
+				Similarity: sim,
+				Utility:    1,
+				Confidence: 1,
+				Freshness:  1,
+				ScopeMatch: 1,
+				FinalScore: sim,
+			},
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Score.Similarity == out[j].Score.Similarity {
+			return out[i].Experience.ID < out[j].Experience.ID
+		}
+		return out[i].Score.Similarity > out[j].Score.Similarity
+	})
+	return out
+}
+
 func scoreOne(c experience.ScoredExperience, scope ScopeContext, cfg RankConfig, now time.Time) ScoreBreakdown {
 	sim := clamp01(c.Similarity)
 	util := clamp01(c.Experience.Utility)

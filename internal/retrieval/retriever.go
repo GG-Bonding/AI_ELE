@@ -113,3 +113,44 @@ func (r *Retriever) Retrieve(ctx context.Context, q Query) ([]RankedExperience, 
 	}
 	return ranked, nil
 }
+
+// RetrieveBySimilarity runs Phase-1 semantic retrieval and ranks by Similarity only
+// (no utility / freshness / scope product). Used by evaluation "raw retrieval" arm.
+func (r *Retriever) RetrieveBySimilarity(ctx context.Context, q Query) ([]RankedExperience, error) {
+	if strings.TrimSpace(q.TenantID) == "" {
+		return nil, fmt.Errorf("%w: tenant_id is required", experience.ErrInvalidInput)
+	}
+	if strings.TrimSpace(q.Task) == "" {
+		return nil, fmt.Errorf("%w: task is required", experience.ErrInvalidInput)
+	}
+
+	finalTopK := q.TopK
+	if finalTopK <= 0 {
+		finalTopK = r.rank.DefaultTopK
+	}
+
+	vectors, err := r.embedder.Embed(ctx, []string{q.Task})
+	if err != nil {
+		return nil, fmt.Errorf("embed retrieval task: %w", err)
+	}
+	if len(vectors) != 1 {
+		return nil, fmt.Errorf("embed retrieval task: expected 1 vector, got %d", len(vectors))
+	}
+
+	candidates, err := r.experiences.Search(ctx, experience.SearchInput{
+		TenantID:       q.TenantID,
+		Types:          q.Types,
+		Scopes:         q.Scopes,
+		QueryEmbedding: vectors[0],
+		TopK:           r.rank.CandidateTopK,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("raw semantic retrieval: %w", err)
+	}
+
+	ranked := RankBySimilarity(candidates)
+	if finalTopK > 0 && len(ranked) > finalTopK {
+		ranked = ranked[:finalTopK]
+	}
+	return ranked, nil
+}
