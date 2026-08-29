@@ -1,0 +1,2 @@
+-- Keep a copy under /migrations for operators who run SQL manually.
+-- Runtime migrations are embedded from storage/postgres/migrations.

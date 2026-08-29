@@ -1,0 +1,9 @@
+# Ignore local override config if present; keep example tracked.
+configs/config.local.yaml
+*.exe
+bin/
+dist/
+.idea/
+.vscode/
+*.log
+coverage.out

@@ -1,0 +1,3 @@
+# Convenience wrapper so `docker compose up` works from repo root.
+include:
+  - path: deployments/docker-compose.yml
