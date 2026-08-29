@@ -12,6 +12,7 @@ import (
 
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/logging"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
@@ -51,7 +52,10 @@ func run() error {
 		return nil
 	}
 
-	srv := httpserver.New(logger, httpserver.DBReady{DB: db})
+	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
+	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, httpserver.Options{
+		Episodes: episodeSvc,
+	})
 	httpServer := &http.Server{
 		Addr:         cfg.Server.Addr,
 		Handler:      srv.Handler(),

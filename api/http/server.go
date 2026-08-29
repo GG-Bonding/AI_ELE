@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -25,19 +26,34 @@ func (d DBReady) Ready(ctx context.Context) error {
 	return postgres.Ping(ctx, d.DB)
 }
 
-// Server is the Phase 0 HTTP surface.
-type Server struct {
-	logger *slog.Logger
-	ready  ReadyChecker
-	mux    *http.ServeMux
+// EpisodeService is the subset of episode.Service used by HTTP handlers.
+type EpisodeService interface {
+	CreateEpisode(ctx context.Context, in episode.CreateEpisodeInput) (episode.Episode, error)
+	GetEpisode(ctx context.Context, tenantID, id string) (episode.Episode, error)
+	AddAttempt(ctx context.Context, in episode.AddAttemptInput) (episode.Attempt, error)
+	CompleteEpisode(ctx context.Context, in episode.CompleteEpisodeInput) (episode.Episode, episode.Outcome, error)
 }
 
-// New constructs an HTTP server with health endpoints.
-func New(logger *slog.Logger, ready ReadyChecker) *Server {
+// Server is the HTTP API surface.
+type Server struct {
+	logger   *slog.Logger
+	ready    ReadyChecker
+	episodes EpisodeService
+	mux      *http.ServeMux
+}
+
+// Options configures optional server dependencies.
+type Options struct {
+	Episodes EpisodeService
+}
+
+// New constructs an HTTP server with health and episode endpoints.
+func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 	s := &Server{
-		logger: logger,
-		ready:  ready,
-		mux:    http.NewServeMux(),
+		logger:   logger,
+		ready:    ready,
+		episodes: opts.Episodes,
+		mux:      http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -46,6 +62,11 @@ func New(logger *slog.Logger, ready ReadyChecker) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+
+	s.mux.HandleFunc("POST /api/v1/episodes", s.handleCreateEpisode)
+	s.mux.HandleFunc("GET /api/v1/episodes/{id}", s.handleGetEpisode)
+	s.mux.HandleFunc("POST /api/v1/episodes/{id}/attempts", s.handleAddAttempt)
+	s.mux.HandleFunc("POST /api/v1/episodes/{id}/outcome", s.handleCompleteOutcome)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

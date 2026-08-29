@@ -24,7 +24,7 @@ func (s stubReady) Ready(context.Context) error {
 func TestHealthzOK(t *testing.T) {
 	t.Parallel()
 
-	srv := httpserver.New(slog.New(slog.NewTextHandler(io.Discard, nil)), stubReady{})
+	srv := httpserver.New(slog.New(slog.NewTextHandler(io.Discard, nil)), stubReady{}, httpserver.Options{})
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -38,7 +38,7 @@ func TestHealthzOK(t *testing.T) {
 func TestReadyzOK(t *testing.T) {
 	t.Parallel()
 
-	srv := httpserver.New(slog.New(slog.NewTextHandler(io.Discard, nil)), stubReady{})
+	srv := httpserver.New(slog.New(slog.NewTextHandler(io.Discard, nil)), stubReady{}, httpserver.Options{})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -55,6 +55,7 @@ func TestReadyzUnavailable(t *testing.T) {
 	srv := httpserver.New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		stubReady{err: errors.New("db down")},
+		httpserver.Options{},
 	)
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -69,7 +70,7 @@ func TestReadyzUnavailable(t *testing.T) {
 func TestRequestIDHeaderPropagated(t *testing.T) {
 	t.Parallel()
 
-	srv := httpserver.New(slog.New(slog.NewTextHandler(io.Discard, nil)), stubReady{})
+	srv := httpserver.New(slog.New(slog.NewTextHandler(io.Discard, nil)), stubReady{}, httpserver.Options{})
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Request-ID", "fixed-id")
 	rec := httptest.NewRecorder()

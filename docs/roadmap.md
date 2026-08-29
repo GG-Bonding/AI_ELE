@@ -12,7 +12,7 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 
 **Out of scope:** Episode, Experience, LLM providers
 
-## Phase 1 — Episode Lifecycle
+## Phase 1 — Episode Lifecycle ✅
 
 - Episode / Attempt / Outcome models + repositories
 - REST: create episode, add attempt, complete with outcome
