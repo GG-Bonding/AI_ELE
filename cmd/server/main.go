@@ -16,6 +16,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/logging"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
@@ -60,10 +61,16 @@ func run() error {
 
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
 	experienceSvc := experience.NewService(postgres.NewExperienceRepository(db))
+	feedbackSvc := feedback.NewService(
+		postgres.NewFeedbackRepository(db),
+		episodeSvc,
+		feedback.NewRewardEngine(nil),
+	)
 
 	opts := httpserver.Options{
 		Episodes:    episodeSvc,
 		Experiences: experienceSvc,
+		Feedbacks:   feedbackSvc,
 	}
 
 	if cfg.LLM.Enabled {

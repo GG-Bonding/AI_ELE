@@ -12,6 +12,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
@@ -64,6 +65,12 @@ type ContextService interface {
 	BuildContext(ctx context.Context, req contextx.Request) (contextx.Response, error)
 }
 
+// FeedbackService collects and aggregates episode feedback.
+type FeedbackService interface {
+	Submit(ctx context.Context, in feedback.SubmitInput) (feedback.SubmitResult, error)
+	GetEpisodeReward(ctx context.Context, tenantID, episodeID string) (feedback.EpisodeReward, []feedback.Feedback, error)
+}
+
 // Server is the HTTP API surface.
 type Server struct {
 	logger        *slog.Logger
@@ -74,6 +81,7 @@ type Server struct {
 	retriever     ExperienceRetriever
 	storePipeline ExperienceStorePipeline
 	contexts      ContextService
+	feedbacks     FeedbackService
 	mux           *http.ServeMux
 }
 
@@ -85,6 +93,7 @@ type Options struct {
 	Retriever     ExperienceRetriever
 	StorePipeline ExperienceStorePipeline
 	Contexts      ContextService
+	Feedbacks     FeedbackService
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -98,6 +107,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		retriever:     opts.Retriever,
 		storePipeline: opts.StorePipeline,
 		contexts:      opts.Contexts,
+		feedbacks:     opts.Feedbacks,
 		mux:           http.NewServeMux(),
 	}
 	s.routes()
@@ -116,6 +126,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/experiences/{id}", s.handleGetExperience)
 	s.mux.HandleFunc("POST /api/v1/experiences/search", s.handleSearchExperiences)
 	s.mux.HandleFunc("POST /api/v1/context", s.handleBuildContext)
+
+	s.mux.HandleFunc("POST /api/v1/feedback", s.handleSubmitFeedback)
+	s.mux.HandleFunc("GET /api/v1/episodes/{id}/reward", s.handleGetEpisodeReward)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

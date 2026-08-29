@@ -43,7 +43,7 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - Context Builder (max experiences / tokens)
 - Untrusted-data framing in context payload
 
-## Phase 6 — Feedback Pipeline
+## Phase 6 — Feedback Pipeline ✅
 
 - Feedback model, normalizer (reward ∈ [-1,1]), source weights
 - Persist raw feedback; compute weighted reward

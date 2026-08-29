@@ -8,7 +8,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 ## Status
 
-**Phase 5** — Experience selector + context builder (`POST /api/v1/context`).
+**Phase 6** — Feedback pipeline (raw signals + weighted episode reward).
 
 See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md).
 
