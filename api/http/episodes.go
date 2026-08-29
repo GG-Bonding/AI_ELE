@@ -3,11 +3,14 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attempt"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 )
 
 type createEpisodeRequest struct {
@@ -42,8 +45,9 @@ type completeOutcomeRequest struct {
 }
 
 type completeOutcomeResponse struct {
-	Episode episode.Episode `json:"episode"`
-	Outcome episode.Outcome `json:"outcome"`
+	Episode              episode.Episode        `json:"episode"`
+	Outcome              episode.Outcome        `json:"outcome"`
+	ExperienceCandidates []experience.Candidate `json:"experience_candidates,omitempty"`
 }
 
 func (s *Server) handleCreateEpisode(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +155,47 @@ func (s *Server) handleCompleteOutcome(w http.ResponseWriter, r *http.Request) {
 		s.writeEpisodeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, completeOutcomeResponse{Episode: ep, Outcome: out})
+
+	resp := completeOutcomeResponse{Episode: ep, Outcome: out}
+	if s.extractor != nil {
+		attempts, listErr := s.episodes.ListAttempts(r.Context(), req.TenantID, ep.ID)
+		if listErr != nil {
+			s.logger.Error("list attempts for extraction failed",
+				slog.String("request_id", requestIDFrom(r.Context())),
+				slog.String("tenant_id", req.TenantID),
+				slog.String("episode_id", ep.ID),
+				slog.String("error", listErr.Error()),
+			)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":   fmt.Sprintf("list attempts for extraction on episode %s: %v", ep.ID, listErr),
+				"episode": ep,
+				"outcome": out,
+			})
+			return
+		}
+		candidates, extractErr := s.extractor.Extract(r.Context(), extractor.ExtractInput{
+			Episode:  ep,
+			Attempts: attempts,
+			Outcome:  out,
+		})
+		if extractErr != nil {
+			s.logger.Error("experience extraction failed",
+				slog.String("request_id", requestIDFrom(r.Context())),
+				slog.String("tenant_id", req.TenantID),
+				slog.String("episode_id", ep.ID),
+				slog.String("error", extractErr.Error()),
+			)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":   extractErr.Error(),
+				"episode": ep,
+				"outcome": out,
+			})
+			return
+		}
+		resp.ExperienceCandidates = candidates
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func decodeJSON(r *http.Request, dst any) error {

@@ -2,7 +2,9 @@ package httpserver_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 )
 
 func newTestServer(t *testing.T) http.Handler {
@@ -21,6 +25,28 @@ func newTestServer(t *testing.T) http.Handler {
 		stubReady{},
 		httpserver.Options{Episodes: svc},
 	).Handler()
+}
+
+func newTestServerWithExtractor(t *testing.T, ext httpserver.ExperienceExtractor) http.Handler {
+	t.Helper()
+	svc := episode.NewService(episode.NewMemoryRepository())
+	return httpserver.New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		stubReady{},
+		httpserver.Options{Episodes: svc, Extractor: ext},
+	).Handler()
+}
+
+type stubExtractor struct {
+	candidates []experience.Candidate
+	err        error
+}
+
+func (s stubExtractor) Extract(context.Context, extractor.ExtractInput) ([]experience.Candidate, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.candidates, nil
 }
 
 func TestEpisodeLifecycleHTTP(t *testing.T) {
@@ -76,6 +102,68 @@ func TestEpisodeLifecycleHTTP(t *testing.T) {
 	got := getJSON(t, h, "/api/v1/episodes/"+episodeID+"?tenant_id=tenant_a", http.StatusOK)
 	if got["status"] != "SUCCESS" {
 		t.Fatalf("get status = %v", got["status"])
+	}
+}
+
+func TestOutcomeExtractionReturnsCandidates(t *testing.T) {
+	t.Parallel()
+	h := newTestServerWithExtractor(t, stubExtractor{
+		candidates: []experience.Candidate{{
+			Type:       experience.TypeProcedural,
+			Trigger:    "create jira issue when project key unknown",
+			Content:    "Resolve project key first",
+			Confidence: 0.9,
+			Scope:      experience.ScopeTool,
+			ScopeKey:   "jira",
+		}},
+	})
+
+	ep := postJSON(t, h, "/api/v1/episodes", map[string]any{
+		"tenant_id": "tenant_a",
+		"agent_id":  "agent",
+		"user_id":   "user",
+		"goal":      "Create Jira issue",
+	}, http.StatusCreated)
+	id, _ := ep["id"].(string)
+
+	postJSON(t, h, "/api/v1/episodes/"+id+"/attempts", map[string]any{
+		"tenant_id": "tenant_a",
+		"action":    "search",
+		"status":    "SUCCESS",
+	}, http.StatusCreated)
+
+	out := postJSON(t, h, "/api/v1/episodes/"+id+"/outcome", map[string]any{
+		"tenant_id": "tenant_a",
+		"status":    "SUCCESS",
+	}, http.StatusCreated)
+
+	cands, ok := out["experience_candidates"].([]any)
+	if !ok || len(cands) != 1 {
+		t.Fatalf("experience_candidates = %#v", out["experience_candidates"])
+	}
+}
+
+func TestOutcomeExtractionFailureIsNotSilent(t *testing.T) {
+	t.Parallel()
+	h := newTestServerWithExtractor(t, stubExtractor{err: errors.New("schema boom")})
+
+	ep := postJSON(t, h, "/api/v1/episodes", map[string]any{
+		"tenant_id": "tenant_a",
+		"agent_id":  "agent",
+		"user_id":   "user",
+		"goal":      "g",
+	}, http.StatusCreated)
+	id, _ := ep["id"].(string)
+
+	out := postJSON(t, h, "/api/v1/episodes/"+id+"/outcome", map[string]any{
+		"tenant_id": "tenant_a",
+		"status":    "SUCCESS",
+	}, http.StatusInternalServerError)
+	if out["error"] == nil || out["error"] == "" {
+		t.Fatalf("expected extraction error, got %#v", out)
+	}
+	if out["episode"] == nil || out["outcome"] == nil {
+		t.Fatalf("expected episode/outcome in error response: %#v", out)
 	}
 }
 

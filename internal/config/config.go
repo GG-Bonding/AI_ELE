@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -13,6 +14,7 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	Log      LogConfig      `yaml:"log"`
+	LLM      LLMConfig      `yaml:"llm"`
 }
 
 type ServerConfig struct {
@@ -32,6 +34,14 @@ type DatabaseConfig struct {
 type LogConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
+}
+
+// LLMConfig configures an optional OpenAI-compatible provider for extraction.
+type LLMConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	BaseURL string `yaml:"base_url"`
+	APIKey  string `yaml:"api_key"`
+	Model   string `yaml:"model"`
 }
 
 // Load reads YAML from path and applies environment overrides.
@@ -83,6 +93,9 @@ func (c *Config) applyDefaults() {
 	if c.Log.Format == "" {
 		c.Log.Format = "json"
 	}
+	if c.LLM.Model == "" {
+		c.LLM.Model = "gpt-4o-mini"
+	}
 }
 
 func (c *Config) applyEnvOverrides() {
@@ -94,6 +107,18 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("AEE_LOG_LEVEL"); v != "" {
 		c.Log.Level = v
+	}
+	if v := os.Getenv("AEE_LLM_ENABLED"); v != "" {
+		c.LLM.Enabled = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("AEE_LLM_BASE_URL"); v != "" {
+		c.LLM.BaseURL = v
+	}
+	if v := os.Getenv("AEE_LLM_API_KEY"); v != "" {
+		c.LLM.APIKey = v
+	}
+	if v := os.Getenv("AEE_LLM_MODEL"); v != "" {
+		c.LLM.Model = v
 	}
 }
 
@@ -111,6 +136,14 @@ func (c Config) Validate() error {
 	case "json", "text":
 	default:
 		return fmt.Errorf("log.format must be one of json|text, got %q", c.Log.Format)
+	}
+	if c.LLM.Enabled {
+		if strings.TrimSpace(c.LLM.BaseURL) == "" {
+			return fmt.Errorf("llm.base_url is required when llm.enabled is true")
+		}
+		if strings.TrimSpace(c.LLM.Model) == "" {
+			return fmt.Errorf("llm.model is required when llm.enabled is true")
+		}
 	}
 	return nil
 }

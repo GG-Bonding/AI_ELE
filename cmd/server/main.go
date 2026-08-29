@@ -13,7 +13,9 @@ import (
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/logging"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -53,9 +55,28 @@ func run() error {
 	}
 
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
-	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, httpserver.Options{
-		Episodes: episodeSvc,
-	})
+
+	opts := httpserver.Options{Episodes: episodeSvc}
+	if cfg.LLM.Enabled {
+		llm, err := provider.NewOpenAICompatLLM(provider.OpenAICompatConfig{
+			BaseURL: cfg.LLM.BaseURL,
+			APIKey:  cfg.LLM.APIKey,
+			Model:   cfg.LLM.Model,
+		})
+		if err != nil {
+			return fmt.Errorf("init llm provider: %w", err)
+		}
+		ext, err := extractor.New(llm)
+		if err != nil {
+			return fmt.Errorf("init experience extractor: %w", err)
+		}
+		opts.Extractor = ext
+		logger.Info("experience extraction enabled", "model", cfg.LLM.Model, "base_url", cfg.LLM.BaseURL)
+	} else {
+		logger.Info("experience extraction disabled")
+	}
+
+	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, opts)
 	httpServer := &http.Server{
 		Addr:         cfg.Server.Addr,
 		Handler:      srv.Handler(),

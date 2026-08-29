@@ -18,7 +18,7 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - REST: create episode, add attempt, complete with outcome
 - Tenant isolation tests
 
-## Phase 2 — Experience Extraction
+## Phase 2 — Experience Extraction ✅
 
 - `ExperienceExtractor` with LLM provider interface
 - JSON schema validation + one retry

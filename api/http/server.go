@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -31,29 +33,38 @@ type EpisodeService interface {
 	CreateEpisode(ctx context.Context, in episode.CreateEpisodeInput) (episode.Episode, error)
 	GetEpisode(ctx context.Context, tenantID, id string) (episode.Episode, error)
 	AddAttempt(ctx context.Context, in episode.AddAttemptInput) (episode.Attempt, error)
+	ListAttempts(ctx context.Context, tenantID, episodeID string) ([]episode.Attempt, error)
 	CompleteEpisode(ctx context.Context, in episode.CompleteEpisodeInput) (episode.Episode, episode.Outcome, error)
+}
+
+// ExperienceExtractor extracts candidates after an episode completes.
+type ExperienceExtractor interface {
+	Extract(ctx context.Context, in extractor.ExtractInput) ([]experience.Candidate, error)
 }
 
 // Server is the HTTP API surface.
 type Server struct {
-	logger   *slog.Logger
-	ready    ReadyChecker
-	episodes EpisodeService
-	mux      *http.ServeMux
+	logger    *slog.Logger
+	ready     ReadyChecker
+	episodes  EpisodeService
+	extractor ExperienceExtractor
+	mux       *http.ServeMux
 }
 
 // Options configures optional server dependencies.
 type Options struct {
-	Episodes EpisodeService
+	Episodes  EpisodeService
+	Extractor ExperienceExtractor
 }
 
 // New constructs an HTTP server with health and episode endpoints.
 func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 	s := &Server{
-		logger:   logger,
-		ready:    ready,
-		episodes: opts.Episodes,
-		mux:      http.NewServeMux(),
+		logger:    logger,
+		ready:     ready,
+		episodes:  opts.Episodes,
+		extractor: opts.Extractor,
+		mux:       http.NewServeMux(),
 	}
 	s.routes()
 	return s
