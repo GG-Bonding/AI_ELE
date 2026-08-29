@@ -12,12 +12,14 @@ import (
 
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/logging"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -104,8 +106,17 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init retriever: %w", err)
 		}
+		contextSvc, err := contextx.NewService(
+			retriever,
+			selector.New(selector.DefaultConfig()),
+			contextx.New(contextx.DefaultConfig()),
+		)
+		if err != nil {
+			return fmt.Errorf("init context service: %w", err)
+		}
 		opts.StorePipeline = pipeline
 		opts.Retriever = retriever
+		opts.Contexts = contextSvc
 		logger.Info("experience retrieval enabled", "model", cfg.Embedding.Model, "dimensions", cfg.Embedding.Dimensions)
 	} else {
 		logger.Info("experience retrieval disabled")

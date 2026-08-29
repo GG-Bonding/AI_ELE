@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
@@ -58,6 +59,11 @@ type ExperienceStorePipeline interface {
 	StoreCandidates(ctx context.Context, tenantID, sourceEpisodeID string, candidates []experience.Candidate) (experience.StoreCandidatesResult, error)
 }
 
+// ContextService builds agent context from selected experiences.
+type ContextService interface {
+	BuildContext(ctx context.Context, req contextx.Request) (contextx.Response, error)
+}
+
 // Server is the HTTP API surface.
 type Server struct {
 	logger        *slog.Logger
@@ -67,6 +73,7 @@ type Server struct {
 	experiences   ExperienceService
 	retriever     ExperienceRetriever
 	storePipeline ExperienceStorePipeline
+	contexts      ContextService
 	mux           *http.ServeMux
 }
 
@@ -77,6 +84,7 @@ type Options struct {
 	Experiences   ExperienceService
 	Retriever     ExperienceRetriever
 	StorePipeline ExperienceStorePipeline
+	Contexts      ContextService
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -89,6 +97,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		experiences:   opts.Experiences,
 		retriever:     opts.Retriever,
 		storePipeline: opts.StorePipeline,
+		contexts:      opts.Contexts,
 		mux:           http.NewServeMux(),
 	}
 	s.routes()
@@ -106,6 +115,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/v1/experiences/{id}", s.handleGetExperience)
 	s.mux.HandleFunc("POST /api/v1/experiences/search", s.handleSearchExperiences)
+	s.mux.HandleFunc("POST /api/v1/context", s.handleBuildContext)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

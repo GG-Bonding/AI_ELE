@@ -37,7 +37,7 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
   `FinalScore = Similarity × Utility × Confidence × Freshness × ScopeMatch`
 - Deterministic ranking tests
 
-## Phase 5 — Selector + Context
+## Phase 5 — Selector + Context ✅
 
 - KEEP / ABSTRACT / IGNORE / BLOCK
 - Context Builder (max experiences / tokens)
