@@ -61,7 +61,7 @@ Development is strictly phased. Do not skip ahead. One phase → one suggested c
 - Freshness decay (type-specific λ; age from LastUsedAt)
 - Evolution interface: Supersede + Decay only
 
-## Phase 9 — SDKs
+## Phase 9 — SDKs ✅
 
 - Go SDK + Python SDK
 - Examples for episode → context → feedback loop

@@ -1,11 +1,17 @@
-.PHONY: test lint fmt run migrate compose-up compose-down tidy
+.PHONY: test lint fmt run migrate compose-up compose-down tidy test-python
 
 GO ?= go
 # Default proxy helps environments where proxy.golang.org is unreachable.
 export GOPROXY ?= https://goproxy.cn,direct
+PYTHON ?= python3
 
-test:
+test: test-go test-python
+
+test-go:
 	$(GO) test ./...
+
+test-python:
+	cd sdk/python && PYTHONPATH=. $(PYTHON) -m unittest discover -s tests -v
 
 lint:
 	$(GO) vet ./...

@@ -8,7 +8,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 ## Status
 
-**Phase 8** — Supersession + freshness decay.
+**Phase 9** — Go + Python SDKs (`sdk/go`, `sdk/python`).
 
 See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md).
 
@@ -53,6 +53,17 @@ curl -s localhost:8080/api/v1/episodes/EPISODE_ID/outcome -H 'Content-Type: appl
 make test
 make lint
 make migrate
+```
+
+### SDKs
+
+```bash
+# Go
+go test ./sdk/go/...
+EXPERIENCE_ENGINE_URL=http://localhost:8080 go run ./sdk/go/example
+
+# Python
+cd sdk/python && pip install -e . && python examples/jira_loop.py
 ```
 
 ## License
