@@ -7,3 +7,10 @@ dist/
 .vscode/
 *.log
 coverage.out
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
