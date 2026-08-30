@@ -12,10 +12,12 @@ import (
 
 // Service owns experience create/get/search rules.
 type Service struct {
-	repo      Repository
-	relations RelationRepository // optional; V2-5 conflict graph
-	now       func() time.Time
-	id        func() string
+	repo        Repository
+	relations   RelationRepository // optional; V2-5 conflict graph
+	patterns    PatternRepository  // optional; V2-7 generalization
+	generalizer PatternGeneralizer // optional; defaults to HeuristicPatternGeneralizer
+	now         func() time.Time
+	id          func() string
 }
 
 // NewService constructs an experience service.

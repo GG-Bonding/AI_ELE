@@ -1,6 +1,6 @@
 # Roadmap
 
-**Current:** V2 in progress — **V2-6 Supersession** landed (after V2-1…V2-5).
+**Current:** V2 in progress — **V2-7 Generalization → Pattern** landed (after V2-1…V2-6).
 
 V1 Complete. V1.1 (stale PROCESSING recovery, Postgres integration CI) remains tracked as **V2-0** ops hardening and may run in parallel; it does not reopen the V1 learning-loop contract.
 
@@ -93,7 +93,7 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2-4 Semantic Dedup | ✅ landed |
 | V2-5 Conflict Detection | ✅ landed |
 | V2-6 Supersession (intelligence) | ✅ landed |
-| V2-7 Generalization → Pattern | planned |
+| V2-7 Generalization → Pattern | ✅ landed |
 | V2-8 Pattern Learning | planned |
 | V2-9 Skill Candidate | planned |
 | V2-10 Sequential benchmark | planned |

@@ -67,7 +67,10 @@ func run() error {
 	actionSvc := action.NewService(postgres.NewActionRepository(db), episodeSvc)
 	experienceRepo := postgres.NewExperienceRepository(db)
 	relationRepo := postgres.NewRelationRepository(db)
-	experienceSvc := experience.NewService(experienceRepo).WithRelations(relationRepo)
+	patternRepo := postgres.NewPatternRepository(db)
+	experienceSvc := experience.NewService(experienceRepo).
+		WithRelations(relationRepo).
+		WithPatterns(patternRepo)
 	usageRepo := postgres.NewUsageRepository(db)
 	eventRepo := postgres.NewLearningEventRepository(db)
 	learnApplier := postgres.NewLearningEventApplier(db)

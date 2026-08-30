@@ -58,6 +58,19 @@ Directed edge between experiences: `DUPLICATE` / `SUPPORTS` / `CONFLICTS` / `SUP
 
 Unresolved `CONFLICTS` → selector fail-closes (BLOCK both sides). Clear Authority gap → `SUPERSEDES` + loser `DEPRECATED` (V2-6).
 
+### Pattern (V2-7)
+
+Generalized rule derived from ≥3 experiences across ≥3 distinct episodes (same type/scope/scope_key, avg utility ≥ 0.70, low conflict rate).
+
+| Field | Notes |
+| --- | --- |
+| Status | `CANDIDATE` / `ACTIVE` / `DEPRECATED` / `ARCHIVED` |
+| SupportCount | Number of supporting experiences |
+| Evidence | `pattern_evidence` rows (pattern ↔ experience) |
+| Relation | `DERIVED_FROM` from pattern id → experience id |
+
+Patterns are not auto-injected into context yet (V2-8+ learning / retrieval).
+
 ### Semantic Dedup (V2-4)
 
 Store path: exact fingerprint (within episode) → semantic neighbors (same type/scope) → `DedupJudge`.
