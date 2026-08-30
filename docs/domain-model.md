@@ -52,6 +52,12 @@ Long-lived reusable knowledge extracted from episodes.
 
 Lifecycle: Candidate → Evaluator thresholds → ACTIVE / CANDIDATE / discard → optional Supersede → DEPRECATED.
 
+### ExperienceRelation (V2-5)
+
+Directed edge between experiences: `DUPLICATE` / `SUPPORTS` / `CONFLICTS` / `SUPERSEDES` / `DERIVED_FROM`.
+
+Unresolved `CONFLICTS` → selector fail-closes (BLOCK both sides from auto-context). `SUPERSEDES` authority resolution is V2-6.
+
 ### Semantic Dedup (V2-4)
 
 Store path: exact fingerprint (within episode) → semantic neighbors (same type/scope) → `DedupJudge`.

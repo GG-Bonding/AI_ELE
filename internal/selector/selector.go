@@ -74,18 +74,38 @@ var (
 
 // Select applies decisions in order: BLOCK → IGNORE → COMPRESS → KEEP.
 // Lexical overlap is intentionally NOT used (V1-12): embedding similarity already gates relevance.
+// SelectOptions carries optional V2 signals into selection (e.g. unresolved conflicts).
+type SelectOptions struct {
+	// ConflictPeers maps experienceID → conflicting peer ID. Either side is BLOCKED.
+	ConflictPeers map[string]string
+}
+
+// Select applies decisions in order: BLOCK → IGNORE → COMPRESS → KEEP.
 func (s *Selector) Select(task string, ranked []retrieval.RankedExperience) []Result {
+	return s.SelectWithOptions(task, ranked, SelectOptions{})
+}
+
+// SelectWithOptions is Select plus optional conflict-awareness (V2-5).
+func (s *Selector) SelectWithOptions(task string, ranked []retrieval.RankedExperience, opts SelectOptions) []Result {
 	_ = task // reserved for future Unicode/BM25 gates
 	out := make([]Result, 0, len(ranked))
 	for _, item := range ranked {
-		out = append(out, s.selectOne(item))
+		out = append(out, s.selectOne(item, opts))
 	}
 	return out
 }
 
-func (s *Selector) selectOne(item retrieval.RankedExperience) Result {
+func (s *Selector) selectOne(item retrieval.RankedExperience, opts SelectOptions) Result {
 	exp := item.Experience
 	score := item.Score
+
+	if peer, ok := opts.ConflictPeers[exp.ID]; ok && peer != "" {
+		return Result{
+			Experience: item,
+			Decision:   DecisionBlock,
+			Reason:     "unresolved conflict with experience " + peer,
+		}
+	}
 
 	if !exp.Status.Retrievable() {
 		return Result{Experience: item, Decision: DecisionBlock, Reason: fmt.Sprintf("status %s is not retrievable", exp.Status)}

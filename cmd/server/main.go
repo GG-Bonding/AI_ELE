@@ -66,7 +66,8 @@ func run() error {
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
 	actionSvc := action.NewService(postgres.NewActionRepository(db), episodeSvc)
 	experienceRepo := postgres.NewExperienceRepository(db)
-	experienceSvc := experience.NewService(experienceRepo)
+	relationRepo := postgres.NewRelationRepository(db)
+	experienceSvc := experience.NewService(experienceRepo).WithRelations(relationRepo)
 	usageRepo := postgres.NewUsageRepository(db)
 	eventRepo := postgres.NewLearningEventRepository(db)
 	learnApplier := postgres.NewLearningEventApplier(db)
@@ -138,6 +139,7 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init context service: %w", err)
 		}
+		contextSvc = contextSvc.WithConflicts(experienceSvc)
 		opts.StorePipeline = pipeline
 		opts.Retriever = retriever
 		opts.Contexts = contextSvc

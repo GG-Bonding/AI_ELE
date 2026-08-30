@@ -20,12 +20,18 @@ type UsageRecorder interface {
 	RecordUsages(ctx context.Context, in learning.RecordInput) error
 }
 
+// ConflictLookup resolves unresolved experience conflicts for selection (V2-5).
+type ConflictLookup interface {
+	ConflictPeers(ctx context.Context, tenantID string, experienceIDs []string) (map[string]string, error)
+}
+
 // Service orchestrates Retrieve → Select → Build for agent context.
 type Service struct {
 	retriever Retriever
 	selector  *selector.Selector
 	builder   *Builder
 	usages    UsageRecorder
+	conflicts ConflictLookup
 }
 
 // NewService constructs a context service.
@@ -46,6 +52,13 @@ func NewServiceWithUsage(retriever Retriever, sel *selector.Selector, builder *B
 	}
 	return &Service{retriever: retriever, selector: sel, builder: builder, usages: usages}, nil
 }
+
+// WithConflicts attaches a conflict lookup used to BLOCK unresolved opposing experiences.
+func (s *Service) WithConflicts(lookup ConflictLookup) *Service {
+	s.conflicts = lookup
+	return s
+}
+
 
 // Request is a context build request.
 type Request struct {
@@ -96,7 +109,19 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 		return Response{}, fmt.Errorf("retrieve for context: %w", err)
 	}
 
-	selected := s.selector.Select(req.Task, ranked)
+	conflictPeers := map[string]string(nil)
+	if s.conflicts != nil && len(ranked) > 0 {
+		ids := make([]string, 0, len(ranked))
+		for _, item := range ranked {
+			ids = append(ids, item.Experience.ID)
+		}
+		peers, err := s.conflicts.ConflictPeers(ctx, req.TenantID, ids)
+		if err != nil {
+			return Response{}, fmt.Errorf("lookup experience conflicts: %w", err)
+		}
+		conflictPeers = peers
+	}
+	selected := s.selector.SelectWithOptions(req.Task, ranked, selector.SelectOptions{ConflictPeers: conflictPeers})
 
 	builder := s.builder
 	if req.MaxExperiences > 0 || req.MaxTokens > 0 {

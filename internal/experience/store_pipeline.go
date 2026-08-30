@@ -50,6 +50,7 @@ func NewStorePipeline(svc *Service, embedder provider.EmbeddingProvider, cfg Sto
 type StoreCandidatesResult struct {
 	Stored      []Experience
 	Reinforced  []Experience
+	Conflicts   []ExperienceRelation
 	Evaluations []evaluator.Evaluation
 	Skipped     int
 }
@@ -117,10 +118,12 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 			continue
 		}
 
-		if merged, ok, err := p.trySemanticMerge(ctx, tenantID, sourceEpisodeID, c, vectors[i], storedEvidence, eval.Quality); err != nil {
+		merge, err := p.trySemanticMerge(ctx, tenantID, sourceEpisodeID, c, vectors[i], storedEvidence, eval.Quality)
+		if err != nil {
 			return result, fmt.Errorf("semantic dedup candidate %d for episode %s: %w", i, sourceEpisodeID, err)
-		} else if ok {
-			result.Reinforced = append(result.Reinforced, merged)
+		}
+		if merge.Reinforced {
+			result.Reinforced = append(result.Reinforced, merge.Experience)
 			continue
 		}
 
@@ -142,6 +145,21 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 			return result, fmt.Errorf("store candidate %d for episode %s: %w", i, sourceEpisodeID, err)
 		}
 		result.Stored = append(result.Stored, created)
+
+		for _, peer := range merge.ConflictPeers {
+			rel, err := p.svc.RecordConflict(ctx, tenantID, RecordConflictInput{
+				FromExperienceID: created.ID,
+				ToExperienceID:   peer.ID,
+				Confidence:       peer.Similarity,
+				Reason:           "semantic polarity conflict on store",
+			})
+			if err != nil {
+				return result, fmt.Errorf("record conflict for candidate %d episode %s: %w", i, sourceEpisodeID, err)
+			}
+			if rel.ID != "" {
+				result.Conflicts = append(result.Conflicts, rel)
+			}
+		}
 	}
 	return result, nil
 }
@@ -153,9 +171,10 @@ func (p *StorePipeline) trySemanticMerge(
 	embedding []float32,
 	evidence Evidence,
 	quality float64,
-) (Experience, bool, error) {
+) (semanticMergeResult, error) {
+	out := semanticMergeResult{}
 	if p.dedup.Disabled {
-		return Experience{}, false, nil
+		return out, nil
 	}
 
 	neighbors, err := p.svc.Search(ctx, SearchInput{
@@ -167,7 +186,7 @@ func (p *StorePipeline) trySemanticMerge(
 		TopK:           p.dedup.NeighborTopK,
 	})
 	if err != nil {
-		return Experience{}, false, err
+		return out, err
 	}
 
 	for _, n := range neighbors {
@@ -187,7 +206,7 @@ func (p *StorePipeline) trySemanticMerge(
 			Similarity:       n.Similarity,
 		})
 		if err != nil {
-			return Experience{}, false, err
+			return out, err
 		}
 		switch decision {
 		case DedupSame:
@@ -197,18 +216,34 @@ func (p *StorePipeline) trySemanticMerge(
 				Confidence: quality,
 			})
 			if err != nil {
-				return Experience{}, false, err
+				return out, err
 			}
-			return reinforced, true, nil
+			out.Reinforced = true
+			out.Experience = reinforced
+			return out, nil
 		case DedupConflict:
-			// Do not merge opposing neighbors; keep looking for a SAME match.
+			out.ConflictPeers = append(out.ConflictPeers, conflictPeer{
+				ID:         n.Experience.ID,
+				Similarity: n.Similarity,
+			})
 			continue
 		default:
 			// RELATED / DIFFERENT: keep searching lower-ranked neighbors.
 			continue
 		}
 	}
-	return Experience{}, false, nil
+	return out, nil
+}
+
+type conflictPeer struct {
+	ID         string
+	Similarity float64
+}
+
+type semanticMergeResult struct {
+	Reinforced    bool
+	Experience    Experience
+	ConflictPeers []conflictPeer
 }
 
 func toEvalInput(c Candidate) evaluator.CandidateInput {
