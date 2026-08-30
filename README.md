@@ -15,6 +15,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 **V2-1 landed:** Action Tracking + ExperienceActionLink.
 **V2-2 landed:** Feedback Targeting (action / field / experience / tool).
 **V2-3 landed:** Attribution uses FeedbackTarget + ExperienceActionLink (not retrieval-score credit).
+**V2-0 landed:** Stale `PROCESSING` recovery for episode learning jobs + Postgres/pgvector integration CI.
 **V2-10 landed:** Sequential Benchmark — PATH-like V1 vs V2 comparison; V2 raises success and lowers negative transfer via authority supersession.
 **V2-9 landed:** Skill Candidate — Pattern → YAML skill description (`auto_execute: false`; no engine execution).
 **V2-8 landed:** Pattern Learning — Patterns carry Beta utility; feedback on member experiences updates Pattern utility (and can promote CANDIDATE → ACTIVE).
@@ -32,9 +33,9 @@ Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Dedup �
 See [docs/v1-hardening.md](docs/v1-hardening.md) for the closed V1 checklist.
 See [docs/v2.md](docs/v2.md) for the V2 plan.
 
-**Also tracked (V2-0 / V1.1 ops):**
-- stale `PROCESSING` recovery for episode learning / learning events
-- Postgres integration CI (service container + `go test` against real pgvector)
+**Also tracked (done as V2-0):**
+- stale `PROCESSING` recovery for episode learning jobs (retry + startup sweep)
+- Postgres integration CI (pgvector service + `go test ./storage/postgres/...`)
 
 See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md), [docs/evaluation.md](docs/evaluation.md).
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-**Current:** V2 DoD met — **V2-10 Sequential Benchmark** landed (after V2-1…V2-9).
+**Current:** V2 complete on `main` (V2-0…V2-10). Ops hardening V2-0 landed with the intelligence track.
 
 V1 Complete. V1.1 (stale PROCESSING recovery, Postgres integration CI) remains tracked as **V2-0** ops hardening and may run in parallel; it does not reopen the V1 learning-loop contract.
 
@@ -86,7 +86,7 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 
 | Phase | Status |
 | --- | --- |
-| V2-0 V1.1 hardening (stale PROCESSING + Postgres CI) | planned |
+| V2-0 V1.1 hardening (stale PROCESSING + Postgres CI) | ✅ landed |
 | V2-1 Action Tracking + ExperienceActionLink | ✅ in progress / landed |
 | V2-2 Feedback Targeting | ✅ landed |
 | V2-3 Attribution v2 | ✅ landed |

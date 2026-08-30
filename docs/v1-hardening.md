@@ -71,7 +71,7 @@ Addressed the 6 blockers from the production/E2E consistency review:
 
 | ID | Item | Status |
 | --- | --- | --- |
-| V1.1-01 | Stale `PROCESSING` recovery (episode learning jobs / in-flight learning events) | planned |
-| V1.1-02 | Postgres integration CI (pgvector service + migrate + `go test ./storage/postgres/...`) | planned |
+| V1.1-01 | Stale `PROCESSING` recovery (episode learning jobs / in-flight learning events) | ✅ done |
+| V1.1-02 | Postgres integration CI (pgvector service + migrate + `go test ./storage/postgres/...`) | ✅ done |
 
 V1.1 is production-ops hardening, not a reopen of the V1 learning-loop contract.

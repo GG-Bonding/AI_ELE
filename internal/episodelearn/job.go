@@ -33,4 +33,6 @@ type Repository interface {
 	MarkProcessing(ctx context.Context, tenantID, episodeID string) error
 	MarkApplied(ctx context.Context, tenantID, episodeID string) error
 	MarkFailed(ctx context.Context, tenantID, episodeID, lastError string) error
+	// ListStaleProcessing returns PROCESSING jobs whose updated_at is strictly before cutoff (V2-0).
+	ListStaleProcessing(ctx context.Context, cutoff time.Time) ([]Job, error)
 }

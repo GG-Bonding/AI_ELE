@@ -136,3 +136,31 @@ func (r *EpisodeLearningRepository) MarkFailed(ctx context.Context, tenantID, ep
 	}
 	return nil
 }
+
+func (r *EpisodeLearningRepository) ListStaleProcessing(ctx context.Context, cutoff time.Time) ([]episodelearn.Job, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, episode_id, status, last_error, created_at, updated_at
+		FROM episode_learning_jobs
+		WHERE status = $1 AND updated_at < $2
+		ORDER BY updated_at ASC
+	`, string(episodelearn.StatusProcessing), cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("list stale processing jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []episodelearn.Job
+	for rows.Next() {
+		var job episodelearn.Job
+		var status string
+		if err := rows.Scan(&job.ID, &job.TenantID, &job.EpisodeID, &status, &job.LastError, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan stale learning job: %w", err)
+		}
+		job.Status = episodelearn.Status(status)
+		out = append(out, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stale learning jobs: %w", err)
+	}
+	return out, nil
+}

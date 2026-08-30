@@ -159,6 +159,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init episode learning processor: %w", err)
 		}
+		if n, err := processor.RecoverStaleJobs(context.Background()); err != nil {
+			return fmt.Errorf("recover stale learning jobs: %w", err)
+		} else if n > 0 {
+			logger.Info("recovered stale episode learning jobs", "count", n)
+		}
 		opts.Learning = processor
 		logger.Info("episode learning processor enabled")
 	}

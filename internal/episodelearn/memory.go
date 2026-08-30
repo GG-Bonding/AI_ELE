@@ -20,7 +20,7 @@ type MemoryRepository struct {
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
 		jobs: make(map[string]Job),
-		now:  time.Now().UTC,
+		now:  func() time.Time { return time.Now().UTC() },
 		id:   func() string { return uuid.NewString() },
 	}
 }
@@ -106,4 +106,16 @@ func (m *MemoryRepository) MarkFailed(_ context.Context, tenantID, episodeID, la
 	job.UpdatedAt = m.now()
 	m.jobs[k] = job
 	return nil
+}
+
+func (m *MemoryRepository) ListStaleProcessing(_ context.Context, cutoff time.Time) ([]Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Job
+	for _, job := range m.jobs {
+		if job.Status == StatusProcessing && job.UpdatedAt.Before(cutoff) {
+			out = append(out, job)
+		}
+	}
+	return out, nil
 }

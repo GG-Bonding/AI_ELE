@@ -3,6 +3,7 @@ package episodelearn
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attempt"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
@@ -11,6 +12,11 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/outcome"
 )
+
+// DefaultStaleProcessingAfter is how long a job may stay PROCESSING before recovery (V2-0).
+const DefaultStaleProcessingAfter = 15 * time.Minute
+
+const staleProcessingError = "stale PROCESSING recovered after crash or timeout"
 
 // Extractor extracts experience candidates from a completed episode trace.
 type Extractor interface {
@@ -29,9 +35,11 @@ type StorePipeline interface {
 
 // Processor runs Extract → BuildEvidence → Store for a completed episode.
 type Processor struct {
-	extractor Extractor
-	store     StorePipeline
-	jobs      Repository
+	extractor  Extractor
+	store      StorePipeline
+	jobs       Repository
+	staleAfter time.Duration
+	now        func() time.Time
 }
 
 // NewProcessor constructs an episode learning processor.
@@ -45,7 +53,21 @@ func NewProcessor(extractor Extractor, store StorePipeline, jobs Repository) (*P
 	if jobs == nil {
 		return nil, fmt.Errorf("learning job repository is required")
 	}
-	return &Processor{extractor: extractor, store: store, jobs: jobs}, nil
+	return &Processor{
+		extractor:  extractor,
+		store:      store,
+		jobs:       jobs,
+		staleAfter: DefaultStaleProcessingAfter,
+		now:        func() time.Time { return time.Now().UTC() },
+	}, nil
+}
+
+// WithStaleAfter overrides the stale PROCESSING threshold (tests / ops).
+func (p *Processor) WithStaleAfter(d time.Duration) *Processor {
+	if d > 0 {
+		p.staleAfter = d
+	}
+	return p
 }
 
 // ProcessInput is everything needed to learn from a completed episode.
@@ -88,7 +110,7 @@ func (p *Processor) Process(ctx context.Context, in ProcessInput) (ProcessResult
 	return result, nil
 }
 
-// Retry re-runs the pipeline when the job is FAILED or PENDING.
+// Retry re-runs the pipeline when the job is FAILED, PENDING, or stale PROCESSING (V2-0).
 func (p *Processor) Retry(ctx context.Context, tenantID string, ep episode.Episode, attempts []attempt.Attempt, out outcome.Outcome) (ProcessResult, error) {
 	job, err := p.jobs.GetByEpisode(ctx, tenantID, ep.ID)
 	if err != nil {
@@ -100,7 +122,13 @@ func (p *Processor) Retry(ctx context.Context, tenantID string, ep episode.Episo
 	case StatusFailed, StatusPending:
 		// fall through to re-process
 	case StatusProcessing:
-		return ProcessResult{LearningStatus: StatusProcessing}, nil
+		if !p.isStale(job) {
+			return ProcessResult{LearningStatus: StatusProcessing}, nil
+		}
+		if err := p.jobs.MarkFailed(ctx, tenantID, ep.ID, staleProcessingError); err != nil {
+			return ProcessResult{}, fmt.Errorf("requeue stale processing job: %w", err)
+		}
+		// fall through to re-process
 	}
 	return p.Process(ctx, ProcessInput{
 		TenantID: tenantID,
@@ -108,6 +136,31 @@ func (p *Processor) Retry(ctx context.Context, tenantID string, ep episode.Episo
 		Attempts: attempts,
 		Outcome:  out,
 	})
+}
+
+// RecoverStaleJobs marks stuck PROCESSING jobs as FAILED so retry can reclaim them (V2-0).
+// Intended for process startup or a periodic ops sweep.
+func (p *Processor) RecoverStaleJobs(ctx context.Context) (int, error) {
+	cutoff := p.now().Add(-p.staleAfter)
+	stale, err := p.jobs.ListStaleProcessing(ctx, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("list stale processing jobs: %w", err)
+	}
+	n := 0
+	for _, job := range stale {
+		if err := p.jobs.MarkFailed(ctx, job.TenantID, job.EpisodeID, staleProcessingError); err != nil {
+			return n, fmt.Errorf("mark stale job failed for %s/%s: %w", job.TenantID, job.EpisodeID, err)
+		}
+		n++
+	}
+	return n, nil
+}
+
+func (p *Processor) isStale(job Job) bool {
+	if job.Status != StatusProcessing {
+		return false
+	}
+	return p.now().Sub(job.UpdatedAt) >= p.staleAfter
 }
 
 func (p *Processor) runPipeline(ctx context.Context, in ProcessInput) (ProcessResult, error) {

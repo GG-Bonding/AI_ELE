@@ -1,8 +1,10 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,3 +15,29 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: aee
+          POSTGRES_PASSWORD: aee
+          POSTGRES_DB: aee
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aee -d aee"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Postgres + pgvector integration tests
+        env:
+          AEE_DATABASE_URL: postgres://aee:aee@localhost:5432/aee?sslmode=disable
+        run: go test ./storage/postgres/... -count=1 -timeout 5m
