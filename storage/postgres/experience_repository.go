@@ -61,14 +61,15 @@ func (r *ExperienceRepository) Update(ctx context.Context, exp experience.Experi
 			confidence = $6, utility = $7, alpha = $8, beta = $9,
 			success_count = $10, failure_count = $11, use_count = $12,
 			status = $13, version = $14, supersedes_id = $15,
-			updated_at = $16, last_used_at = $17
-		WHERE tenant_id = $18 AND id = $19 AND version = $20
+			updated_at = $16, last_used_at = $17, evidence = $18
+		WHERE tenant_id = $19 AND id = $20 AND version = $21
 	`,
 		string(exp.Type), string(exp.Scope), exp.ScopeKey, exp.Trigger, exp.Content,
 		exp.Confidence, exp.Utility, exp.Alpha, exp.Beta,
 		exp.SuccessCount, exp.FailureCount, exp.UseCount,
 		string(exp.Status), nextVersion, exp.SupersedesID,
-		exp.UpdatedAt, exp.LastUsedAt, exp.TenantID, exp.ID, exp.Version,
+		exp.UpdatedAt, exp.LastUsedAt, mustJSON(exp.Evidence),
+		exp.TenantID, exp.ID, exp.Version,
 	)
 	if err != nil {
 		return experience.Experience{}, fmt.Errorf("update experience: %w", err)

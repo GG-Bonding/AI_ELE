@@ -50,16 +50,17 @@ func NewProcessor(extractor Extractor, store StorePipeline, jobs Repository) (*P
 
 // ProcessInput is everything needed to learn from a completed episode.
 type ProcessInput struct {
-	TenantID  string
-	Episode   episode.Episode
-	Attempts  []attempt.Attempt
-	Outcome   outcome.Outcome
+	TenantID string
+	Episode  episode.Episode
+	Attempts []attempt.Attempt
+	Outcome  outcome.Outcome
 }
 
 // ProcessResult summarizes extraction, storage, and job status.
 type ProcessResult struct {
 	Candidates        []experience.Candidate
 	Stored            []experience.Experience
+	Reinforced        []experience.Experience
 	LearningStatus    Status
 	LearningLastError string
 }
@@ -130,5 +131,6 @@ func (p *Processor) runPipeline(ctx context.Context, in ProcessInput) (ProcessRe
 		return result, fmt.Errorf("store experiences: %w", err)
 	}
 	result.Stored = stored.Stored
+	result.Reinforced = stored.Reinforced
 	return result, nil
 }

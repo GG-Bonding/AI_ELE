@@ -42,15 +42,28 @@ func (s Status) Retrievable() bool {
 	return s == StatusActive || s == StatusCandidate
 }
 
-// Evidence is persisted supporting-trace metadata for an experience (V1-08).
+// Evidence is persisted supporting-trace metadata for an experience (V1-08 / V2-4).
 type Evidence struct {
-	FailedAttemptCount  int      `json:"failed_attempt_count,omitempty"`
-	SuccessAttemptCount int      `json:"success_attempt_count,omitempty"`
-	HasFailureContrast  bool     `json:"has_failure_contrast,omitempty"`
-	HasToolErrorCode    bool     `json:"has_tool_error_code,omitempty"`
-	SourceEpisodeID     string   `json:"source_episode_id,omitempty"`
-	AttemptIDs          []string `json:"attempt_ids,omitempty"`
-	OutcomeID           string   `json:"outcome_id,omitempty"`
+	FailedAttemptCount  int    `json:"failed_attempt_count,omitempty"`
+	SuccessAttemptCount int    `json:"success_attempt_count,omitempty"`
+	HasFailureContrast  bool   `json:"has_failure_contrast,omitempty"`
+	HasToolErrorCode    bool   `json:"has_tool_error_code,omitempty"`
+	SourceEpisodeID     string `json:"source_episode_id,omitempty"`
+	// SupportEpisodeIDs lists distinct episodes that corroborate this experience (V2-4).
+	SupportEpisodeIDs []string `json:"support_episode_ids,omitempty"`
+	AttemptIDs        []string `json:"attempt_ids,omitempty"`
+	OutcomeID         string   `json:"outcome_id,omitempty"`
+}
+
+// SupportCount returns how many distinct episodes support this evidence.
+func (e Evidence) SupportCount() int {
+	if n := len(e.SupportEpisodeIDs); n > 0 {
+		return n
+	}
+	if e.SourceEpisodeID != "" {
+		return 1
+	}
+	return 0
 }
 
 // Experience is a long-lived reusable lesson extracted from episodes.

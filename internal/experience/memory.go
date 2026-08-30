@@ -225,5 +225,8 @@ func cloneExperience(exp Experience) Experience {
 	if exp.Evidence.AttemptIDs != nil {
 		out.Evidence.AttemptIDs = append([]string(nil), exp.Evidence.AttemptIDs...)
 	}
+	if exp.Evidence.SupportEpisodeIDs != nil {
+		out.Evidence.SupportEpisodeIDs = append([]string(nil), exp.Evidence.SupportEpisodeIDs...)
+	}
 	return out
 }

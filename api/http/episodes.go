@@ -48,12 +48,13 @@ type completeOutcomeRequest struct {
 }
 
 type completeOutcomeResponse struct {
-	Episode              episode.Episode         `json:"episode"`
-	Outcome              episode.Outcome         `json:"outcome"`
-	LearningStatus       string                  `json:"learning_status,omitempty"`
-	LearningError        string                  `json:"learning_error,omitempty"`
-	ExperienceCandidates []experience.Candidate  `json:"experience_candidates,omitempty"`
-	StoredExperiences    []experience.Experience `json:"stored_experiences,omitempty"`
+	Episode               episode.Episode         `json:"episode"`
+	Outcome               episode.Outcome         `json:"outcome"`
+	LearningStatus        string                  `json:"learning_status,omitempty"`
+	LearningError         string                  `json:"learning_error,omitempty"`
+	ExperienceCandidates  []experience.Candidate  `json:"experience_candidates,omitempty"`
+	StoredExperiences     []experience.Experience `json:"stored_experiences,omitempty"`
+	ReinforcedExperiences []experience.Experience `json:"reinforced_experiences,omitempty"`
 }
 
 type retryLearningRequest struct {
@@ -201,6 +202,7 @@ func (s *Server) handleCompleteOutcome(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.ExperienceCandidates = learned.Candidates
 			resp.StoredExperiences = learned.Stored
+			resp.ReinforcedExperiences = learned.Reinforced
 			resp.LearningStatus = string(learned.LearningStatus)
 			resp.LearningError = learned.LearningLastError
 		}
@@ -266,6 +268,7 @@ func (s *Server) handleCompleteOutcome(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			resp.StoredExperiences = stored.Stored
+			resp.ReinforcedExperiences = stored.Reinforced
 		}
 	}
 
@@ -321,12 +324,13 @@ func (s *Server) handleRetryEpisodeLearning(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, completeOutcomeResponse{
-		Episode:              ep,
-		Outcome:              out,
-		LearningStatus:       string(learned.LearningStatus),
-		LearningError:        learned.LearningLastError,
-		ExperienceCandidates: learned.Candidates,
-		StoredExperiences:    learned.Stored,
+		Episode:               ep,
+		Outcome:               out,
+		LearningStatus:        string(learned.LearningStatus),
+		LearningError:         learned.LearningLastError,
+		ExperienceCandidates:  learned.Candidates,
+		StoredExperiences:     learned.Stored,
+		ReinforcedExperiences: learned.Reinforced,
 	})
 }
 

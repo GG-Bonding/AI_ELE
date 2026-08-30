@@ -1,6 +1,6 @@
 # Roadmap
 
-**Current:** V2 in progress — **V2-1 Action Tracking** shipped as foundation.
+**Current:** V2 in progress — **V2-4 Semantic Dedup** landed (after V2-1…V2-3).
 
 V1 Complete. V1.1 (stale PROCESSING recovery, Postgres integration CI) remains tracked as **V2-0** ops hardening and may run in parallel; it does not reopen the V1 learning-loop contract.
 
@@ -90,7 +90,7 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2-1 Action Tracking + ExperienceActionLink | ✅ in progress / landed |
 | V2-2 Feedback Targeting | ✅ landed |
 | V2-3 Attribution v2 | ✅ landed |
-| V2-4 Semantic Dedup | planned |
+| V2-4 Semantic Dedup | ✅ landed |
 | V2-5 Conflict Detection | planned |
 | V2-6 Supersession (intelligence) | planned |
 | V2-7 Generalization → Pattern | planned |

@@ -46,10 +46,17 @@ Long-lived reusable knowledge extracted from episodes.
 | Type | `EPISODIC`, `SEMANTIC`, `PROCEDURAL`, `FAILURE`, `CONSTRAINT`, `PREFERENCE` |
 | Scope | at least `TENANT`, `USER`, `AGENT`, `TOOL` (also `GLOBAL`, `TEAM`, `TASK_TYPE` reserved) |
 | Status | `CANDIDATE`, `ACTIVE`, `DEPRECATED`, `BLOCKED`, `ARCHIVED` |
-| Utility | Beta posterior mean `α / (α + β)` |
-| Confidence | Extractor / evaluator quality signal |
+| Utility | Beta posterior mean `α / (α + β)` — practice quality |
+| Confidence | Evidence strength / quality (raised on semantic reinforce; not Utility) |
+| Evidence | Trace metadata + `support_episode_ids` (V2-4 multi-episode corroboration) |
 
 Lifecycle: Candidate → Evaluator thresholds → ACTIVE / CANDIDATE / discard → optional Supersede → DEPRECATED.
+
+### Semantic Dedup (V2-4)
+
+Store path: exact fingerprint (within episode) → semantic neighbors (same type/scope) → `DedupJudge`.
+
+`SAME` merges into the existing experience (evidence + confidence↑). Opposing polarity near-neighbors are `CONFLICT` and are not merged (V2-5 deepens this).
 
 ## Feedback
 

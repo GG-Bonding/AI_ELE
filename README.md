@@ -15,9 +15,10 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 **V2-1 landed:** Action Tracking + ExperienceActionLink.
 **V2-2 landed:** Feedback Targeting (action / field / experience / tool).
 **V2-3 landed:** Attribution uses FeedbackTarget + ExperienceActionLink (not retrieval-score credit).
+**V2-4 landed:** Semantic dedup — SAME neighbors reinforce Evidence/Confidence (no duplicate ACTIVE insert; Utility unchanged).
 
 ```text
-Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Idempotent Store
+Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Dedup → Idempotent Store
 → Authorized Retrieval → Select → Context → Agent/Simulator → Outcome
 → Feedback → Attribution → LearningEvent → Atomic Utility Update → Better Ranking
 ```

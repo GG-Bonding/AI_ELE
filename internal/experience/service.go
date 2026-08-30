@@ -72,6 +72,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Experience, error
 	}
 
 	now := s.now()
+	evidence := in.Evidence
+	srcEpisode := strings.TrimSpace(in.SourceEpisodeID)
+	if evidence.SourceEpisodeID == "" {
+		evidence.SourceEpisodeID = srcEpisode
+	}
+	evidence.SupportEpisodeIDs = appendSupportEpisode(evidence.SupportEpisodeIDs, evidence.SourceEpisodeID)
+	evidence.SupportEpisodeIDs = appendSupportEpisode(evidence.SupportEpisodeIDs, srcEpisode)
+
 	exp := Experience{
 		ID:              s.id(),
 		TenantID:        strings.TrimSpace(in.TenantID),
@@ -80,9 +88,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Experience, error
 		ScopeKey:        strings.TrimSpace(in.ScopeKey),
 		Trigger:         strings.TrimSpace(in.Trigger),
 		Content:         strings.TrimSpace(in.Content),
-		SourceEpisodeID: strings.TrimSpace(in.SourceEpisodeID),
+		SourceEpisodeID: srcEpisode,
 		DedupKey:        strings.TrimSpace(in.DedupKey),
-		Evidence:        in.Evidence,
+		Evidence:        evidence,
 		Confidence:      in.Confidence,
 		Utility:         0.5,
 		Alpha:           1,

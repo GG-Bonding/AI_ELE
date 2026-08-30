@@ -15,13 +15,15 @@ type StorePipeline struct {
 	svc      *Service
 	embedder provider.EmbeddingProvider
 	eval     evaluator.Evaluator
+	dedup    SemanticDedupConfig
 }
 
 // StorePipelineConfig configures quality thresholds when using the default rule evaluator.
 type StorePipelineConfig struct {
-	ActiveMin    float64
-	CandidateMin float64
-	Evaluator    evaluator.Evaluator
+	ActiveMin     float64
+	CandidateMin  float64
+	Evaluator     evaluator.Evaluator
+	SemanticDedup SemanticDedupConfig
 }
 
 // NewStorePipeline constructs a store pipeline.
@@ -36,12 +38,18 @@ func NewStorePipeline(svc *Service, embedder provider.EmbeddingProvider, cfg Sto
 	if ev == nil {
 		ev = evaluator.NewRuleEvaluator(cfg.ActiveMin, cfg.CandidateMin)
 	}
-	return &StorePipeline{svc: svc, embedder: embedder, eval: ev}, nil
+	return &StorePipeline{
+		svc:      svc,
+		embedder: embedder,
+		eval:     ev,
+		dedup:    cfg.SemanticDedup.withDefaults(),
+	}, nil
 }
 
 // StoreCandidatesResult summarizes persistence after extraction.
 type StoreCandidatesResult struct {
 	Stored      []Experience
+	Reinforced  []Experience
 	Evaluations []evaluator.Evaluation
 	Skipped     int
 }
@@ -96,6 +104,8 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 		return result, fmt.Errorf("embed experience candidates: got %d vectors for %d candidates", len(vectors), len(candidates))
 	}
 
+	storedEvidence := toStoredEvidence(evidence)
+
 	for i, c := range candidates {
 		eval, err := p.eval.Evaluate(ctx, toEvalInput(c), evidence, out)
 		if err != nil {
@@ -106,6 +116,14 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 			result.Skipped++
 			continue
 		}
+
+		if merged, ok, err := p.trySemanticMerge(ctx, tenantID, sourceEpisodeID, c, vectors[i], storedEvidence, eval.Quality); err != nil {
+			return result, fmt.Errorf("semantic dedup candidate %d for episode %s: %w", i, sourceEpisodeID, err)
+		} else if ok {
+			result.Reinforced = append(result.Reinforced, merged)
+			continue
+		}
+
 		created, err := p.svc.Create(ctx, CreateInput{
 			TenantID:        tenantID,
 			Type:            c.Type,
@@ -115,7 +133,7 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 			Content:         c.Content,
 			SourceEpisodeID: sourceEpisodeID,
 			DedupKey:        Fingerprint(c),
-			Evidence:        toStoredEvidence(evidence),
+			Evidence:        storedEvidence,
 			Confidence:      eval.Quality,
 			Status:          Status(eval.Status),
 			Embedding:       vectors[i],
@@ -126,6 +144,71 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 		result.Stored = append(result.Stored, created)
 	}
 	return result, nil
+}
+
+func (p *StorePipeline) trySemanticMerge(
+	ctx context.Context,
+	tenantID, sourceEpisodeID string,
+	c Candidate,
+	embedding []float32,
+	evidence Evidence,
+	quality float64,
+) (Experience, bool, error) {
+	if p.dedup.Disabled {
+		return Experience{}, false, nil
+	}
+
+	neighbors, err := p.svc.Search(ctx, SearchInput{
+		TenantID:       tenantID,
+		Types:          []Type{c.Type},
+		Scopes:         []Scope{c.Scope},
+		ScopeKey:       c.ScopeKey,
+		QueryEmbedding: embedding,
+		TopK:           p.dedup.NeighborTopK,
+	})
+	if err != nil {
+		return Experience{}, false, err
+	}
+
+	for _, n := range neighbors {
+		if n.Similarity <= p.dedup.MinSimilarity {
+			break
+		}
+		// Exact within-episode fingerprint path already returns existing row on Create;
+		// skip reinforcing the same source episode as a no-op semantic hit.
+		if n.Experience.SourceEpisodeID == sourceEpisodeID && Fingerprint(c) == n.Experience.DedupKey {
+			continue
+		}
+		decision, err := p.dedup.Judge.Judge(ctx, DedupPair{
+			CandidateTrigger: c.Trigger,
+			CandidateContent: c.Content,
+			NeighborTrigger:  n.Experience.Trigger,
+			NeighborContent:  n.Experience.Content,
+			Similarity:       n.Similarity,
+		})
+		if err != nil {
+			return Experience{}, false, err
+		}
+		switch decision {
+		case DedupSame:
+			reinforced, err := p.svc.Reinforce(ctx, tenantID, n.Experience.ID, ReinforceInput{
+				EpisodeID:  sourceEpisodeID,
+				Evidence:   evidence,
+				Confidence: quality,
+			})
+			if err != nil {
+				return Experience{}, false, err
+			}
+			return reinforced, true, nil
+		case DedupConflict:
+			// Do not merge opposing neighbors; keep looking for a SAME match.
+			continue
+		default:
+			// RELATED / DIFFERENT: keep searching lower-ranked neighbors.
+			continue
+		}
+	}
+	return Experience{}, false, nil
 }
 
 func toEvalInput(c Candidate) evaluator.CandidateInput {
@@ -146,6 +229,7 @@ func toStoredEvidence(e evaluator.Evidence) Evidence {
 		HasFailureContrast:  e.HasFailureContrast,
 		HasToolErrorCode:    e.HasToolErrorCode,
 		SourceEpisodeID:     e.SourceEpisodeID,
+		SupportEpisodeIDs:   appendSupportEpisode(nil, e.SourceEpisodeID),
 		AttemptIDs:          append([]string(nil), e.AttemptIDs...),
 		OutcomeID:           e.OutcomeID,
 	}
