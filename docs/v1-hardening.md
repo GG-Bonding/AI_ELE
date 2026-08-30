@@ -29,12 +29,12 @@ Do **not** mark V1 Complete until P0 + required P1 items below are done and re-r
 
 | ID | Item | Status |
 | --- | --- | --- |
-| V1-17 | Split UsageRecency vs Validity | pending |
+| V1-17 | Split UsageRecency vs Validity | done |
 | V1-18 | Experience dedup | suggested |
 | V1-19 | Conflict candidate hints | suggested |
-| V1-20–22 | Multi-domain / real-agent eval | pending |
+| V1-20–22 | Multi-domain / real-agent eval | partial (jira+github simulators) |
 | V1-23 | Restart persistence check | suggested |
-| V1-24 | Concurrent utility updates | pending |
+| V1-24 | Concurrent utility updates | done (optimistic lock + retry) |
 | V1-25 | Apache-2.0 LICENSE file | done |
 
 ## Acceptance spine

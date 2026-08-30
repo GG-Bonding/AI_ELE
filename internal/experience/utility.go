@@ -40,7 +40,6 @@ func ApplyBetaUpdate(exp Experience, experienceReward, confidence float64, now t
 	exp.Beta = beta
 	exp.Utility = alpha / (alpha + beta)
 	exp.UpdatedAt = now
-	exp.Version++
 	return exp, nil
 }
 

@@ -31,9 +31,15 @@ func (m *MemoryRepository) Update(_ context.Context, exp Experience) (Experience
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := key(exp.TenantID, exp.ID)
-	if _, ok := m.data[k]; !ok {
+	cur, ok := m.data[k]
+	if !ok {
 		return Experience{}, ErrNotFound
 	}
+	// Optimistic lock: caller passes the version it read; we bump on success.
+	if cur.Version != exp.Version {
+		return Experience{}, ErrConflict
+	}
+	exp.Version = cur.Version + 1
 	m.data[k] = cloneExperience(exp)
 	return cloneExperience(exp), nil
 }

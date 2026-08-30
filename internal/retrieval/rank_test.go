@@ -72,23 +72,40 @@ func TestFreshnessSemanticDecaysSlowerThanProcedural(t *testing.T) {
 	}
 }
 
-func TestFreshnessUsesLastUsedAtForUnusedDecay(t *testing.T) {
+func TestUsageRecencyIndependentOfValidity(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	cfg := retrieval.DefaultRankConfig()
 	usedRecently := now.Add(-24 * time.Hour)
 	usedLongAgo := now.Add(-90 * 24 * time.Hour)
-	// UpdatedAt is recent (e.g. utility update) but LastUsedAt is stale → still decays.
-	stale := experience.Experience{
+	oldKnowledge := now.Add(-60 * 24 * time.Hour)
+
+	// Same validity (UpdatedAt=now), different usage → UsageRecency differs, Validity equal.
+	staleUse := experience.Experience{
 		Type: experience.TypeProcedural, Scope: experience.ScopeTool,
 		UpdatedAt: now, LastUsedAt: &usedLongAgo,
 	}
-	fresh := experience.Experience{
+	freshUse := experience.Experience{
 		Type: experience.TypeProcedural, Scope: experience.ScopeTool,
 		UpdatedAt: now, LastUsedAt: &usedRecently,
 	}
-	if !(retrieval.Freshness(fresh, cfg, now) > retrieval.Freshness(stale, cfg, now)) {
-		t.Fatalf("recently used should be fresher than long-unused")
+	if !(retrieval.UsageRecency(freshUse, cfg, now) > retrieval.UsageRecency(staleUse, cfg, now)) {
+		t.Fatalf("recently used should have higher UsageRecency")
+	}
+	if retrieval.Validity(freshUse, cfg, now) != retrieval.Validity(staleUse, cfg, now) {
+		t.Fatalf("Validity should ignore LastUsedAt when UpdatedAt matches")
+	}
+
+	// Old UpdatedAt lowers Validity even if used recently.
+	oldValid := experience.Experience{
+		Type: experience.TypeProcedural, Scope: experience.ScopeTool,
+		UpdatedAt: oldKnowledge, LastUsedAt: &usedRecently,
+	}
+	if !(retrieval.Validity(freshUse, cfg, now) > retrieval.Validity(oldValid, cfg, now)) {
+		t.Fatalf("recent UpdatedAt should have higher Validity")
+	}
+	if !(retrieval.Freshness(freshUse, cfg, now) > retrieval.Freshness(oldValid, cfg, now)) {
+		t.Fatalf("Freshness product should reflect Validity drop")
 	}
 }
 
@@ -115,7 +132,7 @@ func TestFinalScoreIsProductOfComponents(t *testing.T) {
 	}
 	ranked := retrieval.Rank([]experience.ScoredExperience{c}, retrieval.ScopeContext{}, cfg, now)
 	s := ranked[0].Score
-	product := s.Similarity * s.Utility * s.Confidence * s.Freshness * s.ScopeMatch
+	product := s.Similarity * s.Utility * s.Confidence * s.UsageRecency * s.Validity * s.ScopeMatch
 	if abs(s.FinalScore-product) > 1e-12 {
 		t.Fatalf("final %v != product %v (%#v)", s.FinalScore, product, s)
 	}

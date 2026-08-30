@@ -22,6 +22,8 @@ type RankConfig struct {
 	TypeLambda map[experience.Type]float64
 	// ToolScopeLambda overrides λ when scope is TOOL (typically faster decay).
 	ToolScopeLambda float64
+	// UsageLambda decays UsageRecency from LastUsedAt (activity), independent of Validity.
+	UsageLambda float64
 
 	Now func() time.Time
 }
@@ -33,6 +35,7 @@ func DefaultRankConfig() RankConfig {
 		DefaultTopK:     20,
 		DefaultLambda:   0.02,
 		ToolScopeLambda: 0.05,
+		UsageLambda:      0.03,
 		TypeLambda: map[experience.Type]float64{
 			experience.TypeSemantic:   0.005, // slower decay
 			experience.TypeEpisodic:   0.03,
@@ -47,12 +50,14 @@ func DefaultRankConfig() RankConfig {
 
 // ScoreBreakdown makes FinalScore explainable and testable.
 type ScoreBreakdown struct {
-	Similarity float64 `json:"similarity"`
-	Utility    float64 `json:"utility"`
-	Confidence float64 `json:"confidence"`
-	Freshness  float64 `json:"freshness"`
-	ScopeMatch float64 `json:"scope_match"`
-	FinalScore float64 `json:"final_score"`
+	Similarity   float64 `json:"similarity"`
+	Utility      float64 `json:"utility"`
+	Confidence   float64 `json:"confidence"`
+	UsageRecency float64 `json:"usage_recency"` // activity from LastUsedAt
+	Validity     float64 `json:"validity"`      // knowledge age from UpdatedAt
+	Freshness    float64 `json:"freshness"`     // = UsageRecency × Validity (compat)
+	ScopeMatch   float64 `json:"scope_match"`
+	FinalScore   float64 `json:"final_score"`
 }
 
 // RankedExperience is a Phase-2 ranked candidate.
@@ -70,7 +75,7 @@ type ScopeContext struct {
 }
 
 // Rank reorders Phase-1 candidates by:
-// FinalScore = Similarity × Utility × Confidence × Freshness × ScopeMatch
+// FinalScore = Similarity × Utility × Confidence × UsageRecency × Validity × ScopeMatch
 func Rank(candidates []experience.ScoredExperience, scope ScopeContext, cfg RankConfig, now time.Time) []RankedExperience {
 	if cfg.Now != nil && now.IsZero() {
 		now = cfg.Now()
@@ -108,12 +113,14 @@ func RankBySimilarity(candidates []experience.ScoredExperience) []RankedExperien
 		out = append(out, RankedExperience{
 			Experience: c.Experience,
 			Score: ScoreBreakdown{
-				Similarity: sim,
-				Utility:    1,
-				Confidence: 1,
-				Freshness:  1,
-				ScopeMatch: 1,
-				FinalScore: sim,
+				Similarity:   sim,
+				Utility:      1,
+				Confidence:   1,
+				UsageRecency: 1,
+				Validity:     1,
+				Freshness:    1,
+				ScopeMatch:   1,
+				FinalScore:   sim,
 			},
 		})
 	}
@@ -130,34 +137,50 @@ func scoreOne(c experience.ScoredExperience, scope ScopeContext, cfg RankConfig,
 	sim := clamp01(c.Similarity)
 	util := clamp01(c.Experience.Utility)
 	conf := clamp01(c.Experience.Confidence)
-	fresh := Freshness(c.Experience, cfg, now)
+	usage := UsageRecency(c.Experience, cfg, now)
+	valid := Validity(c.Experience, cfg, now)
+	fresh := clamp01(usage * valid)
 	scopeMatch := ScopeMatch(c.Experience, scope)
-	final := sim * util * conf * fresh * scopeMatch
+	final := sim * util * conf * usage * valid * scopeMatch
 	return ScoreBreakdown{
-		Similarity: sim,
-		Utility:    util,
-		Confidence: conf,
-		Freshness:  fresh,
-		ScopeMatch: scopeMatch,
-		FinalScore: final,
+		Similarity:   sim,
+		Utility:      util,
+		Confidence:   conf,
+		UsageRecency: usage,
+		Validity:     valid,
+		Freshness:    fresh,
+		ScopeMatch:   scopeMatch,
+		FinalScore:   final,
 	}
 }
 
-// Freshness ∈ [0,1] = exp(-λ × ageDays).
-// Age is measured from LastUsedAt when set (unused experiences decay), else UpdatedAt/CreatedAt.
+// Freshness is UsageRecency × Validity (kept for callers/tests that want a single factor).
 func Freshness(exp experience.Experience, cfg RankConfig, now time.Time) float64 {
+	return clamp01(UsageRecency(exp, cfg, now) * Validity(exp, cfg, now))
+}
+
+// UsageRecency ∈ [0,1] measures recent activity from LastUsedAt.
+// Never-used experiences get 1 (no activity penalty; Validity still ages knowledge).
+func UsageRecency(exp experience.Experience, cfg RankConfig, now time.Time) float64 {
+	if exp.LastUsedAt == nil || exp.LastUsedAt.IsZero() {
+		return 1
+	}
+	lambda := cfg.UsageLambda
+	if lambda == 0 {
+		lambda = cfg.DefaultLambda
+	}
+	return decayFrom(now, *exp.LastUsedAt, lambda)
+}
+
+// Validity ∈ [0,1] measures knowledge age from UpdatedAt (else CreatedAt).
+// Utility updates refresh validity; LastUsedAt alone does not.
+func Validity(exp experience.Experience, cfg RankConfig, now time.Time) float64 {
 	ref := exp.UpdatedAt
-	if exp.LastUsedAt != nil && !exp.LastUsedAt.IsZero() {
-		ref = *exp.LastUsedAt
-	} else if ref.IsZero() {
+	if ref.IsZero() {
 		ref = exp.CreatedAt
 	}
 	if ref.IsZero() {
 		return 1
-	}
-	ageDays := now.Sub(ref).Hours() / 24
-	if ageDays < 0 {
-		ageDays = 0
 	}
 	lambda := cfg.DefaultLambda
 	if cfg.TypeLambda != nil {
@@ -169,6 +192,14 @@ func Freshness(exp experience.Experience, cfg RankConfig, now time.Time) float64
 		if cfg.ToolScopeLambda > lambda {
 			lambda = cfg.ToolScopeLambda
 		}
+	}
+	return decayFrom(now, ref, lambda)
+}
+
+func decayFrom(now, ref time.Time, lambda float64) float64 {
+	ageDays := now.Sub(ref).Hours() / 24
+	if ageDays < 0 {
+		ageDays = 0
 	}
 	if lambda < 0 {
 		lambda = 0

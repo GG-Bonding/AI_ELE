@@ -202,22 +202,33 @@ func (s *Service) ApplyFeedbackReward(
 			return updates, fmt.Errorf("create learning event for experience %s: %w", c.ExperienceID, err)
 		}
 
-		exp, err := s.experiences.Get(ctx, tenantID, c.ExperienceID)
-		if err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-			return updates, fmt.Errorf("get experience %s: %w", c.ExperienceID, err)
-		}
-		old := exp.Utility
-		// experience reward for beta update is reward*credit; confidence applied inside ApplyBetaUpdate
 		expReward := reward * c.Weight
-		updated, err := experience.ApplyBetaUpdate(exp, expReward, confidence, now)
-		if err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-			return updates, fmt.Errorf("beta update experience %s: %w", c.ExperienceID, err)
-		}
-		if _, err := s.experiences.Update(ctx, updated); err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-			return updates, fmt.Errorf("persist utility for experience %s: %w", c.ExperienceID, err)
+		var (
+			updated experience.Experience
+			oldUtil float64
+		)
+		const maxAttempts = 8
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			exp, err := s.experiences.Get(ctx, tenantID, c.ExperienceID)
+			if err != nil {
+				_ = s.events.MarkFailed(ctx, tenantID, created.ID)
+				return updates, fmt.Errorf("get experience %s: %w", c.ExperienceID, err)
+			}
+			oldUtil = exp.Utility
+			// experience reward for beta update is reward*credit; confidence applied inside ApplyBetaUpdate
+			updated, err = experience.ApplyBetaUpdate(exp, expReward, confidence, now)
+			if err != nil {
+				_ = s.events.MarkFailed(ctx, tenantID, created.ID)
+				return updates, fmt.Errorf("beta update experience %s: %w", c.ExperienceID, err)
+			}
+			if _, err := s.experiences.Update(ctx, updated); err != nil {
+				if errors.Is(err, experience.ErrConflict) && attempt+1 < maxAttempts {
+					continue
+				}
+				_ = s.events.MarkFailed(ctx, tenantID, created.ID)
+				return updates, fmt.Errorf("persist utility for experience %s: %w", c.ExperienceID, err)
+			}
+			break
 		}
 		if err := s.events.MarkApplied(ctx, tenantID, created.ID, now); err != nil {
 			return updates, fmt.Errorf("mark learning event applied: %w", err)
@@ -228,7 +239,7 @@ func (s *Service) ApplyFeedbackReward(
 			Credit:          c.Weight,
 			Reward:          expReward,
 			EffectiveReward: effective,
-			OldUtility:      old,
+			OldUtility:      oldUtil,
 			NewUtility:      updated.Utility,
 			Alpha:           updated.Alpha,
 			Beta:            updated.Beta,

@@ -8,6 +8,8 @@ import (
 var (
 	// ErrNotFound is returned when an experience is missing for the tenant.
 	ErrNotFound = errors.New("experience not found")
+	// ErrConflict is returned when an optimistic-lock version check fails.
+	ErrConflict = errors.New("experience version conflict")
 	// ErrInvalidInput is returned for validation failures.
 	ErrInvalidInput = errors.New("invalid input")
 )

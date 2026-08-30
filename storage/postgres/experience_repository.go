@@ -49,6 +49,7 @@ func (r *ExperienceRepository) Create(ctx context.Context, exp experience.Experi
 }
 
 func (r *ExperienceRepository) Update(ctx context.Context, exp experience.Experience) (experience.Experience, error) {
+	nextVersion := exp.Version + 1
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE experiences SET
 			type = $1, scope = $2, scope_key = $3, trigger_text = $4, content = $5,
@@ -56,13 +57,13 @@ func (r *ExperienceRepository) Update(ctx context.Context, exp experience.Experi
 			success_count = $10, failure_count = $11, use_count = $12,
 			status = $13, version = $14, supersedes_id = $15,
 			updated_at = $16, last_used_at = $17
-		WHERE tenant_id = $18 AND id = $19
+		WHERE tenant_id = $18 AND id = $19 AND version = $20
 	`,
 		string(exp.Type), string(exp.Scope), exp.ScopeKey, exp.Trigger, exp.Content,
 		exp.Confidence, exp.Utility, exp.Alpha, exp.Beta,
 		exp.SuccessCount, exp.FailureCount, exp.UseCount,
-		string(exp.Status), exp.Version, exp.SupersedesID,
-		exp.UpdatedAt, exp.LastUsedAt, exp.TenantID, exp.ID,
+		string(exp.Status), nextVersion, exp.SupersedesID,
+		exp.UpdatedAt, exp.LastUsedAt, exp.TenantID, exp.ID, exp.Version,
 	)
 	if err != nil {
 		return experience.Experience{}, fmt.Errorf("update experience: %w", err)
@@ -72,8 +73,17 @@ func (r *ExperienceRepository) Update(ctx context.Context, exp experience.Experi
 		return experience.Experience{}, fmt.Errorf("rows affected: %w", err)
 	}
 	if n == 0 {
-		return experience.Experience{}, experience.ErrNotFound
+		// Distinguish missing vs stale version.
+		_, getErr := r.Get(ctx, exp.TenantID, exp.ID)
+		if errors.Is(getErr, experience.ErrNotFound) {
+			return experience.Experience{}, experience.ErrNotFound
+		}
+		if getErr != nil {
+			return experience.Experience{}, getErr
+		}
+		return experience.Experience{}, experience.ErrConflict
 	}
+	exp.Version = nextVersion
 	return exp, nil
 }
 
