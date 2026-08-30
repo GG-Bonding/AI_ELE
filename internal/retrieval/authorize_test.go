@@ -36,6 +36,10 @@ func TestAuthorizedUserAndAgentHardFilter(t *testing.T) {
 	if retrieval.Authorized(userExp, retrieval.Query{}) {
 		t.Fatal("USER scope without user_id must fail closed")
 	}
+	emptyKeyUser := experience.Experience{Scope: experience.ScopeUser, ScopeKey: ""}
+	if retrieval.Authorized(emptyKeyUser, retrieval.Query{UserID: "u1"}) {
+		t.Fatal("USER scope with empty scope_key must fail closed")
+	}
 
 	agentExp := experience.Experience{Scope: experience.ScopeAgent, ScopeKey: "a1"}
 	if retrieval.Authorized(agentExp, retrieval.Query{AgentID: "a2"}) {
@@ -46,5 +50,17 @@ func TestAuthorizedUserAndAgentHardFilter(t *testing.T) {
 	}
 	if retrieval.Authorized(agentExp, retrieval.Query{}) {
 		t.Fatal("AGENT scope without agent_id must fail closed")
+	}
+	emptyKeyAgent := experience.Experience{Scope: experience.ScopeAgent, ScopeKey: ""}
+	if retrieval.Authorized(emptyKeyAgent, retrieval.Query{AgentID: "a1"}) {
+		t.Fatal("AGENT scope with empty scope_key must fail closed")
+	}
+}
+
+func TestAuthorizedToolEmptyScopeKeyDenied(t *testing.T) {
+	t.Parallel()
+	exp := experience.Experience{Scope: experience.ScopeTool, ScopeKey: ""}
+	if retrieval.Authorized(exp, retrieval.Query{Tools: []string{"jira"}}) {
+		t.Fatal("TOOL scope with empty scope_key must fail closed")
 	}
 }

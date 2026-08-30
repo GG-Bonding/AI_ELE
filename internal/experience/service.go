@@ -52,6 +52,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Experience, error
 	if !in.Scope.Valid() {
 		return Experience{}, fmt.Errorf("%w: invalid scope %q", ErrInvalidInput, in.Scope)
 	}
+	if requiresScopeKey(in.Scope) && strings.TrimSpace(in.ScopeKey) == "" {
+		return Experience{}, fmt.Errorf("%w: scope_key is required for scope %q", ErrInvalidInput, in.Scope)
+	}
 	status := in.Status
 	if status == "" {
 		status = StatusActive
@@ -194,4 +197,13 @@ func requireNonEmpty(pairs ...string) error {
 		}
 	}
 	return nil
+}
+
+func requiresScopeKey(scope Scope) bool {
+	switch scope {
+	case ScopeUser, ScopeAgent, ScopeTool:
+		return true
+	default:
+		return false
+	}
 }

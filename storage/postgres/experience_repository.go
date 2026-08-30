@@ -114,10 +114,6 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 	if topK <= 0 {
 		topK = 20
 	}
-	fetchLimit := topK * 4
-	if fetchLimit < topK {
-		fetchLimit = topK
-	}
 
 	args := []any{filter.TenantID, vec}
 	var where []string
@@ -155,7 +151,11 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 		where = append(where, fmt.Sprintf("scope_key = $%d", len(args)))
 	}
 
-	args = append(args, fetchLimit)
+	authSQL, authArgs := scopeAuthSQL(filter.AgentID, filter.UserID, filter.ScopeKey, filter.Tools, args)
+	where = append(where, authSQL)
+	args = authArgs
+
+	args = append(args, topK)
 	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 
 	// $2 is query vector; cosine distance <=> ; similarity = 1 - distance

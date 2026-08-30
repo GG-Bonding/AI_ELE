@@ -10,18 +10,18 @@ func AuthorizedForSearch(exp Experience, agentID, userID string, tools []string,
 		return toolAuthorizedForSearch(exp.ScopeKey, tools, queryScopeKey)
 	case ScopeAgent:
 		agentID = strings.TrimSpace(agentID)
-		if agentID == "" {
+		key := strings.TrimSpace(exp.ScopeKey)
+		if agentID == "" || key == "" || key != agentID {
 			return false
 		}
-		key := strings.TrimSpace(exp.ScopeKey)
-		return key == "" || key == agentID
+		return true
 	case ScopeUser:
 		userID = strings.TrimSpace(userID)
-		if userID == "" {
+		key := strings.TrimSpace(exp.ScopeKey)
+		if userID == "" || key == "" || key != userID {
 			return false
 		}
-		key := strings.TrimSpace(exp.ScopeKey)
-		return key == "" || key == userID
+		return true
 	default:
 		return true
 	}
@@ -30,7 +30,7 @@ func AuthorizedForSearch(exp Experience, agentID, userID string, tools []string,
 func toolAuthorizedForSearch(scopeKey string, tools []string, queryScopeKey string) bool {
 	key := strings.TrimSpace(scopeKey)
 	if key == "" {
-		return true
+		return false
 	}
 	allowed := make(map[string]struct{}, len(tools)+1)
 	for _, t := range tools {
