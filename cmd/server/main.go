@@ -68,9 +68,11 @@ func run() error {
 	experienceRepo := postgres.NewExperienceRepository(db)
 	relationRepo := postgres.NewRelationRepository(db)
 	patternRepo := postgres.NewPatternRepository(db)
+	skillRepo := postgres.NewSkillRepository(db)
 	experienceSvc := experience.NewService(experienceRepo).
 		WithRelations(relationRepo).
-		WithPatterns(patternRepo)
+		WithPatterns(patternRepo).
+		WithSkills(skillRepo)
 	usageRepo := postgres.NewUsageRepository(db)
 	eventRepo := postgres.NewLearningEventRepository(db)
 	learnApplier := postgres.NewLearningEventApplier(db)

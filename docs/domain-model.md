@@ -73,6 +73,18 @@ Generalized rule derived from ≥3 experiences across ≥3 distinct episodes (sa
 
 When a supporting experience receives feedback, Pattern utility updates with the same signed reward (idempotent with learning events). Strong enough practice promotes `CANDIDATE` → `ACTIVE`. Patterns are not yet auto-injected into context (retrieval later).
 
+### Skill Candidate (V2-9)
+
+Executable-looking blueprint derived from a Pattern. Status stays `CANDIDATE` in V2 — **never auto-executed**.
+
+| Field | Notes |
+| --- | --- |
+| PatternID | Source pattern |
+| SpecYAML | `auto_execute: false` + when/guidance steps |
+| Utility / Confidence | Snapshot from pattern at propose time |
+
+HTTP: `POST /api/v1/patterns/{id}/skill`.
+
 ### Semantic Dedup (V2-4)
 
 Store path: exact fingerprint (within episode) → semantic neighbors (same type/scope) → `DedupJudge`.
