@@ -1,6 +1,6 @@
 # V1 Hardening Checklist
 
-**Status: V1 Complete** (as of `ac3ee39` + review closure).
+**Status: V1 Complete** (closed on `main` @ `f422e91`).
 
 Core runtime learning loop is implemented and validated on `main`. Remaining work is tracked under **V1.1** below — do not reopen V1 for those items.
 
