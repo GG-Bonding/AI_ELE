@@ -1,6 +1,8 @@
 # V1 Hardening Checklist
 
-Do **not** mark V1 Complete until P0 + required P1 items below are done and re-reviewed on `main`.
+**Status: V1 Complete** (as of `ac3ee39` + review closure).
+
+Core runtime learning loop is implemented and validated on `main`. Remaining work is tracked under **V1.1** below — do not reopen V1 for those items.
 
 ## P0 (must)
 
@@ -63,3 +65,13 @@ Addressed the 6 blockers from the production/E2E consistency review:
 4. USER/AGENT/TOOL authorization fail-closed (non-empty scope_key) with SQL pre-TopK filter
 5. Structured JSON sanitizer (recursive redact → valid JSON)
 6. Episode learning jobs persisted in Postgres; experience store dedup makes retries idempotent
+
+
+## V1.1 Hardening (next)
+
+| ID | Item | Status |
+| --- | --- | --- |
+| V1.1-01 | Stale `PROCESSING` recovery (episode learning jobs / in-flight learning events) | planned |
+| V1.1-02 | Postgres integration CI (pgvector service + migrate + `go test ./storage/postgres/...`) | planned |
+
+V1.1 is production-ops hardening, not a reopen of the V1 learning-loop contract.

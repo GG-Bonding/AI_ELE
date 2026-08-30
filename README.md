@@ -8,7 +8,19 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 ## Status
 
-**V1 hardening in progress** — Phase 0–10 scaffolding exists; do **not** treat V1 as complete until the [V1 fix checklist](docs/v1-hardening.md) P0/P1 items pass review.
+**V1 Complete** — Core runtime learning loop is implemented and validated.
+
+```text
+Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Idempotent Store
+→ Authorized Retrieval → Select → Context → Agent/Simulator → Outcome
+→ Feedback → Attribution → LearningEvent → Atomic Utility Update → Better Ranking
+```
+
+See [docs/v1-hardening.md](docs/v1-hardening.md) for the closed checklist.
+
+**V1.1 hardening (next):**
+- stale `PROCESSING` recovery for episode learning / learning events
+- Postgres integration CI (service container + `go test` against real pgvector)
 
 See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md), [docs/evaluation.md](docs/evaluation.md).
 

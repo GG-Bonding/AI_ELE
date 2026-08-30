@@ -1,5 +1,7 @@
 # Roadmap
 
+**Current:** V1 Complete. Next: V1.1 (stale PROCESSING recovery, Postgres integration CI).
+
 Development is strictly phased. Do not skip ahead. One phase → one suggested commit.
 
 ## Phase 0 — Bootstrap ✅
@@ -72,7 +74,10 @@ Four arms: Baseline / Raw Retrieval / Utility Retrieval / Utility + Learning
 Metrics: success rate, precision, utilization, avg utility, negative transfer, tokens, latency  
 Core E2E: Jira project-key learning loop (three tasks)
 
-## V1 Definition of Done
+## V1 Definition of Done ✅
+
+**Met on `main`.** Follow-ups: V1.1 stale PROCESSING recovery; Postgres integration CI.
+
 
 See product prompt §三十八. Core proof is the Jira project-key learning loop (three tasks).
 See [docs/evaluation.md](evaluation.md).
