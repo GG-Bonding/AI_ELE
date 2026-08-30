@@ -94,3 +94,17 @@ Freshness = exp(-λ × ageDays)   # λ by type; age from LastUsedAt (else Update
 ## Security Note
 
 Experience content is **untrusted**. Context Builder must label it as historical reference data, not instructions.
+
+
+## Attribution (V2)
+
+When Feedback carries a Target:
+
+| Target | Credit rule |
+| --- | --- |
+| `EPISODE` / nil | V1 fallback: split by retrieval/final score among used experiences |
+| `ACTION` / `ACTION_FIELD` | Only experiences linked to that action (by `ExperienceActionLink.influence`) |
+| `TOOL` | Only experiences linked to actions with that tool name |
+| `EXPERIENCE` | 100% credit to that experience if it was used |
+
+If a precise target has no matching links, learning **fails closed** (no utility update) instead of blaming high-ranked experiences.

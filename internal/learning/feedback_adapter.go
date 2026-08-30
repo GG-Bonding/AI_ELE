@@ -12,15 +12,13 @@ type FeedbackLearner struct {
 }
 
 // ApplyFeedbackReward implements feedback.UtilityLearner.
-func (f FeedbackLearner) ApplyFeedbackReward(
-	ctx context.Context,
-	tenantID, episodeID, feedbackID string,
-	reward, confidence float64,
-) ([]feedback.UtilityChange, error) {
+func (f FeedbackLearner) ApplyFeedbackReward(ctx context.Context, in feedback.LearnInput) ([]feedback.UtilityChange, error) {
 	if f.Inner == nil {
 		return nil, nil
 	}
-	updates, err := f.Inner.ApplyFeedbackReward(ctx, tenantID, episodeID, feedbackID, reward, confidence)
+	updates, err := f.Inner.ApplyFeedbackReward(
+		ctx, in.TenantID, in.EpisodeID, in.FeedbackID, in.Reward, in.Confidence, in.Target,
+	)
 	if err != nil {
 		return nil, err
 	}

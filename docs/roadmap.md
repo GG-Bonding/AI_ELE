@@ -89,7 +89,7 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2-0 V1.1 hardening (stale PROCESSING + Postgres CI) | planned |
 | V2-1 Action Tracking + ExperienceActionLink | ✅ in progress / landed |
 | V2-2 Feedback Targeting | ✅ landed |
-| V2-3 Attribution v2 | planned |
+| V2-3 Attribution v2 | ✅ landed |
 | V2-4 Semantic Dedup | planned |
 | V2-5 Conflict Detection | planned |
 | V2-6 Supersession (intelligence) | planned |

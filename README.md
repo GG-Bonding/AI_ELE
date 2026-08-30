@@ -14,6 +14,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 **V2-1 landed:** Action Tracking + ExperienceActionLink.
 **V2-2 landed:** Feedback Targeting (action / field / experience / tool).
+**V2-3 landed:** Attribution uses FeedbackTarget + ExperienceActionLink (not retrieval-score credit).
 
 ```text
 Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Idempotent Store

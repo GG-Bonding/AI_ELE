@@ -6,12 +6,11 @@ import (
 	"math"
 	"testing"
 	"time"
-
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
-	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/learning"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
@@ -290,7 +289,7 @@ func TestFailureLowersUtility(t *testing.T) {
 		ID: "u1", TenantID: "t", EpisodeID: "ep1", ExperienceID: exp.ID, FinalScore: 0.5,
 	})
 	before := exp.Utility
-	updates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb1", -1.0, 1.0)
+	updates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb1", -1.0, 1.0, nil)
 	if err != nil {
 		t.Fatalf("ApplyFeedbackReward: %v", err)
 	}
@@ -330,7 +329,7 @@ func TestRetryFailedLearningEventUpdatesUtility(t *testing.T) {
 		t.Fatalf("create failed event: %v", err)
 	}
 
-	retryUpdates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-retry", 1.0, 1.0)
+	retryUpdates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-retry", 1.0, 1.0, nil)
 	if err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
@@ -381,7 +380,7 @@ func TestRetryUsesEventPersistedRewardNotCaller(t *testing.T) {
 	}
 
 	// Caller passes positive reward; retry must still apply event's -1 reward.
-	retryUpdates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-reward", 1.0, 1.0)
+	retryUpdates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-reward", 1.0, 1.0, nil)
 	if err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
@@ -436,7 +435,7 @@ func TestAtomicApplyRollsBackOnMarkAppliedFailure(t *testing.T) {
 		t.Fatalf("create event: %v", err)
 	}
 
-	_, err = learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-atomic", 1.0, 1.0)
+	_, err = learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-atomic", 1.0, 1.0, nil)
 	if err == nil {
 		t.Fatal("expected apply to fail when MarkApplied fails")
 	}

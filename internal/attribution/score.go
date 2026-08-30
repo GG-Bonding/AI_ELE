@@ -2,27 +2,21 @@ package attribution
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 )
 
-// Credit is the share of episode reward assigned to one experience.
-type Credit struct {
-	ExperienceID string
-	Weight       float64 // normalized credit in (0,1], sums to 1 across credits
-	Score        float64 // raw score used for attribution
-}
-
-// Strategy assigns episode-level reward credit across used experiences.
-type Strategy interface {
-	Attribute(usages []experience.Usage, episodeReward float64) ([]Credit, error)
-}
-
 // ScoreProportional splits credit by FinalScore (fallback RetrievalScore).
+// Used as V1 behavior and as fallback when feedback has no precise target.
 type ScoreProportional struct{}
 
 // Attribute implements Strategy.
-func (ScoreProportional) Attribute(usages []experience.Usage, episodeReward float64) ([]Credit, error) {
+func (ScoreProportional) Attribute(req Request) ([]Credit, error) {
+	return attributeByScores(req.Usages, req.EpisodeReward)
+}
+
+func attributeByScores(usages []experience.Usage, episodeReward float64) ([]Credit, error) {
 	if len(usages) == 0 {
 		return nil, nil
 	}
@@ -55,7 +49,6 @@ func (ScoreProportional) Attribute(usages []experience.Usage, episodeReward floa
 		sum += score
 	}
 	if sum == 0 {
-		// equal split when scores are unavailable
 		out := make([]Credit, len(usages))
 		w := 1 / float64(len(usages))
 		for i, u := range usages {
@@ -72,17 +65,12 @@ func (ScoreProportional) Attribute(usages []experience.Usage, episodeReward floa
 			Score:        raw[i],
 		})
 	}
-	_ = episodeReward // reward magnitude applied by caller; strategy only allocates weights
+	_ = episodeReward
 	return out, nil
 }
 
 // Ensure interface compliance.
 var _ Strategy = ScoreProportional{}
-
-// NewDefault returns the V1 attribution strategy.
-func NewDefault() Strategy {
-	return ScoreProportional{}
-}
 
 // ValidateCredits checks weights roughly sum to 1.
 func ValidateCredits(credits []Credit) error {
@@ -101,3 +89,45 @@ func ValidateCredits(credits []Credit) error {
 	}
 	return nil
 }
+
+func usageSet(usages []experience.Usage) map[string]experience.Usage {
+	out := make(map[string]experience.Usage, len(usages))
+	for _, u := range usages {
+		out[u.ExperienceID] = u
+	}
+	return out
+}
+
+func normalizeInfluenceCredits(weights map[string]float64) []Credit {
+	var sum float64
+	for _, w := range weights {
+		if w > 0 {
+			sum += w
+		}
+	}
+	if sum <= 0 {
+		return nil
+	}
+	out := make([]Credit, 0, len(weights))
+	for id, w := range weights {
+		if w <= 0 {
+			continue
+		}
+		out = append(out, Credit{
+			ExperienceID: id,
+			Weight:       w / sum,
+			Score:        w,
+		})
+	}
+	// stable-ish order by experience id
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].ExperienceID < out[i].ExperienceID {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
+}
+
+func trim(s string) string { return strings.TrimSpace(s) }

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/action"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 	"github.com/google/uuid"
@@ -20,9 +22,22 @@ type Service struct {
 	events      EventRepository
 	applier     EventApplier
 	strategy    attribution.Strategy
+	links       LinkLister  // optional; experience→action edges for V2 attribution
+	actions     ActionLister // optional; tool_name enrichment for TOOL targets
 	now         func() time.Time
 	id          func() string
 }
+
+// LinkLister lists experience→action influence edges for an episode.
+type LinkLister interface {
+	ListLinks(ctx context.Context, tenantID, episodeID string) ([]action.ExperienceActionLink, error)
+}
+
+// ActionLister lists agent actions for an episode (tool_name enrichment).
+type ActionLister interface {
+	ListActions(ctx context.Context, tenantID, episodeID string) ([]action.AgentAction, error)
+}
+
 
 // New constructs a learning service.
 func New(usages experience.UsageRepository, experiences experience.Repository, strategy attribution.Strategy) (*Service, error) {
@@ -63,6 +78,14 @@ func NewWithEvents(
 		id:          func() string { return uuid.NewString() },
 	}, nil
 }
+
+// WithActionGraph attaches action/link sources used by targeted attribution.
+func (s *Service) WithActionGraph(links LinkLister, actions ActionLister) *Service {
+	s.links = links
+	s.actions = actions
+	return s
+}
+
 
 // RecordInput captures KEEP/COMPRESS experiences that entered context for an episode.
 type RecordInput struct {
@@ -146,6 +169,7 @@ func (s *Service) ApplyFeedbackReward(
 	ctx context.Context,
 	tenantID, episodeID, feedbackID string,
 	reward, confidence float64,
+	target *feedback.Target,
 ) ([]UtilityUpdate, error) {
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(episodeID) == "" || strings.TrimSpace(feedbackID) == "" {
 		return nil, fmt.Errorf("tenant_id, episode_id, and feedback_id are required")
@@ -177,12 +201,24 @@ func (s *Service) ApplyFeedbackReward(
 		return nil, nil
 	}
 
-	credits, err := s.strategy.Attribute(usages, reward)
+	links, err := s.loadAttributionLinks(ctx, tenantID, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	credits, err := s.strategy.Attribute(attribution.Request{
+		Usages:        usages,
+		EpisodeReward: reward,
+		Target:        mapTargetHint(target),
+		Links:         links,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("attribute reward for feedback %s: %w", feedbackID, err)
 	}
 	if err := attribution.ValidateCredits(credits); err != nil {
 		return nil, fmt.Errorf("invalid attribution for feedback %s: %w", feedbackID, err)
+	}
+	if len(credits) == 0 {
+		return nil, nil
 	}
 
 	now := s.now()
@@ -335,4 +371,47 @@ func (s *Service) snapshotUpdate(ctx context.Context, tenantID string, ev Event)
 		Beta:            exp.Beta,
 		AlreadyApplied:  ev.Status == EventApplied,
 	}, nil
+}
+
+func mapTargetHint(t *feedback.Target) *attribution.TargetHint {
+	if t == nil {
+		return nil
+	}
+	return &attribution.TargetHint{
+		Type:         string(t.Type),
+		ActionID:     t.ActionID,
+		ToolName:     t.ToolName,
+		Field:        t.Field,
+		ExperienceID: t.ExperienceID,
+	}
+}
+
+func (s *Service) loadAttributionLinks(ctx context.Context, tenantID, episodeID string) ([]attribution.LinkHint, error) {
+	if s.links == nil {
+		return nil, nil
+	}
+	raw, err := s.links.ListLinks(ctx, tenantID, episodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list experience-action links for episode %s: %w", episodeID, err)
+	}
+	toolByAction := map[string]string{}
+	if s.actions != nil {
+		actions, aerr := s.actions.ListActions(ctx, tenantID, episodeID)
+		if aerr != nil {
+			return nil, fmt.Errorf("list actions for episode %s: %w", episodeID, aerr)
+		}
+		for _, a := range actions {
+			toolByAction[a.ID] = a.ToolName
+		}
+	}
+	out := make([]attribution.LinkHint, 0, len(raw))
+	for _, link := range raw {
+		out = append(out, attribution.LinkHint{
+			ExperienceID: link.ExperienceID,
+			ActionID:     link.ActionID,
+			Influence:    link.Influence,
+			ToolName:     toolByAction[link.ActionID],
+		})
+	}
+	return out, nil
 }

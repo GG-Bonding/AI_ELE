@@ -15,9 +15,19 @@ type EpisodeChecker interface {
 	EpisodeExists(ctx context.Context, tenantID, episodeID string) (bool, error)
 }
 
+// LearnInput carries one feedback's reward plus optional targeting for attribution.
+type LearnInput struct {
+	TenantID   string
+	EpisodeID  string
+	FeedbackID string
+	Reward     float64
+	Confidence float64
+	Target     *Target
+}
+
 // UtilityLearner applies ONE feedback's reward to experiences used by that episode.
 type UtilityLearner interface {
-	ApplyFeedbackReward(ctx context.Context, tenantID, episodeID, feedbackID string, reward, confidence float64) ([]UtilityChange, error)
+	ApplyFeedbackReward(ctx context.Context, in LearnInput) ([]UtilityChange, error)
 }
 
 // UtilityChange is a compact learning result exposed on feedback submit.
@@ -176,9 +186,10 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 	result := SubmitResult{Feedback: created, EpisodeReward: agg}
 	if s.learner != nil {
 		// Learn from THIS feedback only (reward + confidence paired).
-		updates, learnErr := s.learner.ApplyFeedbackReward(
-			ctx, in.TenantID, in.EpisodeID, created.ID, created.Reward, created.Confidence,
-		)
+		updates, learnErr := s.learner.ApplyFeedbackReward(ctx, LearnInput{
+			TenantID: in.TenantID, EpisodeID: in.EpisodeID, FeedbackID: created.ID,
+			Reward: created.Reward, Confidence: created.Confidence, Target: created.Target,
+		})
 		if learnErr != nil {
 			return SubmitResult{}, fmt.Errorf("apply utility learning for feedback %s: %w", created.ID, learnErr)
 		}
@@ -198,9 +209,10 @@ func (s *Service) replaySubmit(ctx context.Context, prior Feedback, idempotent b
 	}
 	result := SubmitResult{Feedback: prior, EpisodeReward: agg, IdempotentReplay: idempotent}
 	if s.learner != nil {
-		updates, learnErr := s.learner.ApplyFeedbackReward(
-			ctx, prior.TenantID, prior.EpisodeID, prior.ID, prior.Reward, prior.Confidence,
-		)
+		updates, learnErr := s.learner.ApplyFeedbackReward(ctx, LearnInput{
+			TenantID: prior.TenantID, EpisodeID: prior.EpisodeID, FeedbackID: prior.ID,
+			Reward: prior.Reward, Confidence: prior.Confidence, Target: prior.Target,
+		})
 		if learnErr != nil {
 			return SubmitResult{}, fmt.Errorf("replay learning for feedback %s: %w", prior.ID, learnErr)
 		}
