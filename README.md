@@ -15,6 +15,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 **V2-1 landed:** Action Tracking + ExperienceActionLink.
 **V2-2 landed:** Feedback Targeting (action / field / experience / tool).
 **V2-3 landed:** Attribution uses FeedbackTarget + ExperienceActionLink (not retrieval-score credit).
+**V2-6 landed:** Authority-based supersession — clear winners DEPRECATED losers; close calls keep CONFLICTS.
 **V2-5 landed:** Conflict detection — opposing experiences get `CONFLICTS` relations and are blocked from auto-context.
 **V2-4 landed:** Semantic dedup — SAME neighbors reinforce Evidence/Confidence (no duplicate ACTIVE insert; Utility unchanged).
 

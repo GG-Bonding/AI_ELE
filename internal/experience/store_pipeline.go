@@ -48,11 +48,12 @@ func NewStorePipeline(svc *Service, embedder provider.EmbeddingProvider, cfg Sto
 
 // StoreCandidatesResult summarizes persistence after extraction.
 type StoreCandidatesResult struct {
-	Stored      []Experience
-	Reinforced  []Experience
-	Conflicts   []ExperienceRelation
-	Evaluations []evaluator.Evaluation
-	Skipped     int
+	Stored        []Experience
+	Reinforced    []Experience
+	Conflicts     []ExperienceRelation
+	Supersessions []ConflictResolution
+	Evaluations   []evaluator.Evaluation
+	Skipped       int
 }
 
 // StoreOptions carries episode outcome/evidence into evaluation.
@@ -147,17 +148,17 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 		result.Stored = append(result.Stored, created)
 
 		for _, peer := range merge.ConflictPeers {
-			rel, err := p.svc.RecordConflict(ctx, tenantID, RecordConflictInput{
-				FromExperienceID: created.ID,
-				ToExperienceID:   peer.ID,
-				Confidence:       peer.Similarity,
-				Reason:           "semantic polarity conflict on store",
-			})
+			resolution, err := p.svc.ResolveConflict(ctx, tenantID, created.ID, peer.ID, peer.Similarity)
 			if err != nil {
-				return result, fmt.Errorf("record conflict for candidate %d episode %s: %w", i, sourceEpisodeID, err)
+				return result, fmt.Errorf("resolve conflict for candidate %d episode %s: %w", i, sourceEpisodeID, err)
 			}
-			if rel.ID != "" {
-				result.Conflicts = append(result.Conflicts, rel)
+			switch resolution.Kind {
+			case ConflictSuperseded:
+				result.Supersessions = append(result.Supersessions, resolution)
+			case ConflictUnresolved:
+				if resolution.Relation.ID != "" {
+					result.Conflicts = append(result.Conflicts, resolution.Relation)
+				}
 			}
 		}
 	}

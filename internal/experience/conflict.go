@@ -7,8 +7,8 @@ import (
 )
 
 // RecordConflictInput records an unresolved CONFLICTS relation between two experiences.
-// V2-5 keeps both ACTIVE; selector fail-closes by not auto-injecting either side.
-// Authority-based SUPERSEDES is deferred to V2-6.
+// Used when authority scores are too close to auto-supersede (V2-6).
+// Selector fail-closes by not auto-injecting either ACTIVE side.
 type RecordConflictInput struct {
 	FromExperienceID string
 	ToExperienceID   string
@@ -60,6 +60,8 @@ func (s *Service) RecordConflict(ctx context.Context, tenantID string, in Record
 }
 
 // ConflictPeers returns unresolved CONFLICTS peers for the given experience IDs.
+// Pairs involving a non-retrievable (e.g. DEPRECATED) experience are omitted so
+// supersession winners are not blocked from context.
 // Returns nil when relations are not configured.
 func (s *Service) ConflictPeers(ctx context.Context, tenantID string, experienceIDs []string) (map[string]string, error) {
 	if s.relations == nil {
@@ -72,7 +74,22 @@ func (s *Service) ConflictPeers(ctx context.Context, tenantID string, experience
 	if err != nil {
 		return nil, fmt.Errorf("list conflict peers: %w", err)
 	}
-	return peers, nil
+	if len(peers) == 0 {
+		return peers, nil
+	}
+	out := make(map[string]string, len(peers))
+	for id, peerID := range peers {
+		a, errA := s.repo.Get(ctx, tenantID, id)
+		b, errB := s.repo.Get(ctx, tenantID, peerID)
+		if errA != nil || errB != nil {
+			continue
+		}
+		if !a.Status.Retrievable() || !b.Status.Retrievable() {
+			continue
+		}
+		out[id] = peerID
+	}
+	return out, nil
 }
 
 // ListRelations returns all relations involving an experience.

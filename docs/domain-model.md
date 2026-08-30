@@ -56,7 +56,7 @@ Lifecycle: Candidate → Evaluator thresholds → ACTIVE / CANDIDATE / discard �
 
 Directed edge between experiences: `DUPLICATE` / `SUPPORTS` / `CONFLICTS` / `SUPERSEDES` / `DERIVED_FROM`.
 
-Unresolved `CONFLICTS` → selector fail-closes (BLOCK both sides from auto-context). `SUPERSEDES` authority resolution is V2-6.
+Unresolved `CONFLICTS` → selector fail-closes (BLOCK both sides). Clear Authority gap → `SUPERSEDES` + loser `DEPRECATED` (V2-6).
 
 ### Semantic Dedup (V2-4)
 
