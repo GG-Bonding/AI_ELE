@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,16 +31,16 @@ func (r *ExperienceRepository) Create(ctx context.Context, exp experience.Experi
 		INSERT INTO experiences (
 			id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id,
 			confidence, utility, alpha, beta, success_count, failure_count, use_count,
-			status, version, supersedes_id, embedding, created_at, updated_at, last_used_at
+			status, version, supersedes_id, embedding, created_at, updated_at, last_used_at, evidence
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,
 			$9,$10,$11,$12,$13,$14,$15,
-			$16,$17,$18,$19::vector,$20,$21,$22
+			$16,$17,$18,$19::vector,$20,$21,$22,$23
 		)
 	`,
 		exp.ID, exp.TenantID, string(exp.Type), string(exp.Scope), exp.ScopeKey, exp.Trigger, exp.Content, exp.SourceEpisodeID,
 		exp.Confidence, exp.Utility, exp.Alpha, exp.Beta, exp.SuccessCount, exp.FailureCount, exp.UseCount,
-		string(exp.Status), exp.Version, exp.SupersedesID, vec, exp.CreatedAt, exp.UpdatedAt, exp.LastUsedAt,
+		string(exp.Status), exp.Version, exp.SupersedesID, vec, exp.CreatedAt, exp.UpdatedAt, exp.LastUsedAt, mustJSON(exp.Evidence),
 	)
 	if err != nil {
 		return experience.Experience{}, fmt.Errorf("insert experience: %w", err)
@@ -80,7 +81,7 @@ func (r *ExperienceRepository) Get(ctx context.Context, tenantID, id string) (ex
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id,
 		       confidence, utility, alpha, beta, success_count, failure_count, use_count,
-		       status, version, supersedes_id, created_at, updated_at, last_used_at
+		       status, version, supersedes_id, created_at, updated_at, last_used_at, evidence
 		FROM experiences
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id)
@@ -147,7 +148,7 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 	q := fmt.Sprintf(`
 		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id,
 		       confidence, utility, alpha, beta, success_count, failure_count, use_count,
-		       status, version, supersedes_id, created_at, updated_at, last_used_at,
+		       status, version, supersedes_id, created_at, updated_at, last_used_at, evidence,
 		       1 - (embedding <=> $2::vector) AS similarity
 		FROM experiences
 		WHERE %s
@@ -166,10 +167,11 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 		var exp experience.Experience
 		var typ, scope, status string
 		var sim float64
+		var evidenceJSON []byte
 		if err := rows.Scan(
 			&exp.ID, &exp.TenantID, &typ, &scope, &exp.ScopeKey, &exp.Trigger, &exp.Content, &exp.SourceEpisodeID,
 			&exp.Confidence, &exp.Utility, &exp.Alpha, &exp.Beta, &exp.SuccessCount, &exp.FailureCount, &exp.UseCount,
-			&status, &exp.Version, &exp.SupersedesID, &exp.CreatedAt, &exp.UpdatedAt, &exp.LastUsedAt,
+			&status, &exp.Version, &exp.SupersedesID, &exp.CreatedAt, &exp.UpdatedAt, &exp.LastUsedAt, &evidenceJSON,
 			&sim,
 		); err != nil {
 			return nil, fmt.Errorf("scan search row: %w", err)
@@ -177,6 +179,11 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 		exp.Type = experience.Type(typ)
 		exp.Scope = experience.Scope(scope)
 		exp.Status = experience.Status(status)
+		if len(evidenceJSON) > 0 && string(evidenceJSON) != "null" {
+			if err := json.Unmarshal(evidenceJSON, &exp.Evidence); err != nil {
+				return nil, fmt.Errorf("decode evidence: %w", err)
+			}
+		}
 		out = append(out, experience.ScoredExperience{Experience: exp, Similarity: sim})
 	}
 	if err := rows.Err(); err != nil {
@@ -246,10 +253,11 @@ type scannable interface {
 func scanExperience(row scannable) (experience.Experience, error) {
 	var exp experience.Experience
 	var typ, scope, status string
+	var evidenceJSON []byte
 	err := row.Scan(
 		&exp.ID, &exp.TenantID, &typ, &scope, &exp.ScopeKey, &exp.Trigger, &exp.Content, &exp.SourceEpisodeID,
 		&exp.Confidence, &exp.Utility, &exp.Alpha, &exp.Beta, &exp.SuccessCount, &exp.FailureCount, &exp.UseCount,
-		&status, &exp.Version, &exp.SupersedesID, &exp.CreatedAt, &exp.UpdatedAt, &exp.LastUsedAt,
+		&status, &exp.Version, &exp.SupersedesID, &exp.CreatedAt, &exp.UpdatedAt, &exp.LastUsedAt, &evidenceJSON,
 	)
 	if err != nil {
 		return experience.Experience{}, err
@@ -257,7 +265,20 @@ func scanExperience(row scannable) (experience.Experience, error) {
 	exp.Type = experience.Type(typ)
 	exp.Scope = experience.Scope(scope)
 	exp.Status = experience.Status(status)
+	if len(evidenceJSON) > 0 && string(evidenceJSON) != "null" {
+		if err := json.Unmarshal(evidenceJSON, &exp.Evidence); err != nil {
+			return experience.Experience{}, fmt.Errorf("decode evidence: %w", err)
+		}
+	}
 	return exp, nil
+}
+
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
 }
 
 func formatVector(v []float32) (string, error) {

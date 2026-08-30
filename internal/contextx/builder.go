@@ -61,7 +61,7 @@ func (b *Builder) Config() Config {
 	return b.cfg
 }
 
-// Build keeps KEEP/ABSTRACT decisions only, respecting max_experiences and max_tokens.
+// Build keeps KEEP/COMPRESS decisions only, respecting max_experiences and max_tokens.
 func (b *Builder) Build(selected []selector.Result) (Payload, error) {
 	payload := Payload{
 		Disclaimer:  Disclaimer,
@@ -72,7 +72,7 @@ func (b *Builder) Build(selected []selector.Result) (Payload, error) {
 	usedChars := utf8.RuneCountInString(Disclaimer)
 
 	for _, sel := range selected {
-		if sel.Decision != selector.DecisionKeep && sel.Decision != selector.DecisionAbstract {
+		if sel.Decision != selector.DecisionKeep && sel.Decision != selector.DecisionCompress {
 			continue
 		}
 		content := strings.TrimSpace(sel.Content)

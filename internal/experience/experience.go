@@ -38,6 +38,17 @@ func (s Status) Retrievable() bool {
 	return s == StatusActive || s == StatusCandidate
 }
 
+// Evidence is persisted supporting-trace metadata for an experience (V1-08).
+type Evidence struct {
+	FailedAttemptCount  int      `json:"failed_attempt_count,omitempty"`
+	SuccessAttemptCount int      `json:"success_attempt_count,omitempty"`
+	HasFailureContrast  bool     `json:"has_failure_contrast,omitempty"`
+	HasToolErrorCode    bool     `json:"has_tool_error_code,omitempty"`
+	SourceEpisodeID     string   `json:"source_episode_id,omitempty"`
+	AttemptIDs          []string `json:"attempt_ids,omitempty"`
+	OutcomeID           string   `json:"outcome_id,omitempty"`
+}
+
 // Experience is a long-lived reusable lesson extracted from episodes.
 type Experience struct {
 	ID       string `json:"id"`
@@ -51,6 +62,8 @@ type Experience struct {
 	Content string `json:"content"`
 
 	SourceEpisodeID string `json:"source_episode_id,omitempty"`
+
+	Evidence Evidence `json:"evidence,omitempty"`
 
 	Confidence float64 `json:"confidence"`
 	Utility    float64 `json:"utility"`

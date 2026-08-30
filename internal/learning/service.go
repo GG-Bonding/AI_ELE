@@ -2,6 +2,7 @@ package learning
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,10 +13,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// Service records experience usage and applies attributed utility updates.
+// Service records experience usage and applies incremental feedback learning events.
 type Service struct {
 	usages      experience.UsageRepository
 	experiences experience.Repository
+	events      EventRepository
 	strategy    attribution.Strategy
 	now         func() time.Time
 	id          func() string
@@ -23,11 +25,24 @@ type Service struct {
 
 // New constructs a learning service.
 func New(usages experience.UsageRepository, experiences experience.Repository, strategy attribution.Strategy) (*Service, error) {
+	return NewWithEvents(usages, experiences, NewMemoryEventRepository(), strategy)
+}
+
+// NewWithEvents constructs a learning service with a persistent event ledger.
+func NewWithEvents(
+	usages experience.UsageRepository,
+	experiences experience.Repository,
+	events EventRepository,
+	strategy attribution.Strategy,
+) (*Service, error) {
 	if usages == nil {
 		return nil, fmt.Errorf("usage repository is required")
 	}
 	if experiences == nil {
 		return nil, fmt.Errorf("experience repository is required")
+	}
+	if events == nil {
+		return nil, fmt.Errorf("learning event repository is required")
 	}
 	if strategy == nil {
 		strategy = attribution.NewDefault()
@@ -35,29 +50,33 @@ func New(usages experience.UsageRepository, experiences experience.Repository, s
 	return &Service{
 		usages:      usages,
 		experiences: experiences,
+		events:      events,
 		strategy:    strategy,
 		now:         time.Now().UTC,
 		id:          func() string { return uuid.NewString() },
 	}, nil
 }
 
-// RecordInput captures KEEP/ABSTRACT experiences that entered context for an episode.
+// RecordInput captures KEEP/COMPRESS experiences that entered context for an episode.
 type RecordInput struct {
 	TenantID   string
 	EpisodeID  string
 	Selections []selector.Result
-	ContextIDs []string // experience IDs that made it into the final context payload
+	ContextIDs []string
 }
 
 // UtilityUpdate is one experience utility change after learning.
 type UtilityUpdate struct {
-	ExperienceID string  `json:"experience_id"`
-	Credit       float64 `json:"credit"`
-	Reward       float64 `json:"experience_reward"`
-	OldUtility   float64 `json:"old_utility"`
-	NewUtility   float64 `json:"new_utility"`
-	Alpha        float64 `json:"alpha"`
-	Beta         float64 `json:"beta"`
+	ExperienceID    string  `json:"experience_id"`
+	LearningEventID string  `json:"learning_event_id,omitempty"`
+	Credit          float64 `json:"credit"`
+	Reward          float64 `json:"experience_reward"`
+	EffectiveReward float64 `json:"effective_reward"`
+	OldUtility      float64 `json:"old_utility"`
+	NewUtility      float64 `json:"new_utility"`
+	Alpha           float64 `json:"alpha"`
+	Beta            float64 `json:"beta"`
+	AlreadyApplied  bool    `json:"already_applied,omitempty"`
 }
 
 // RecordUsages persists usage rows for experiences that entered context.
@@ -73,7 +92,7 @@ func (s *Service) RecordUsages(ctx context.Context, in RecordInput) ([]experienc
 	now := s.now()
 	var created []experience.Usage
 	for _, sel := range in.Selections {
-		if sel.Decision != selector.DecisionKeep && sel.Decision != selector.DecisionAbstract {
+		if sel.Decision != selector.DecisionKeep && sel.Decision != selector.DecisionCompress {
 			continue
 		}
 		expID := sel.Experience.Experience.ID
@@ -98,7 +117,6 @@ func (s *Service) RecordUsages(ctx context.Context, in RecordInput) ([]experienc
 		}
 		created = append(created, row)
 
-		// bump use_count / last_used_at
 		exp, err := s.experiences.Get(ctx, in.TenantID, expID)
 		if err != nil {
 			return created, fmt.Errorf("get experience %s for use_count: %w", expID, err)
@@ -114,12 +132,25 @@ func (s *Service) RecordUsages(ctx context.Context, in RecordInput) ([]experienc
 	return created, nil
 }
 
-// ApplyEpisodeReward attributes episode reward to used experiences and updates utilities.
-func (s *Service) ApplyEpisodeReward(
+// ApplyFeedbackReward attributes THIS feedback's reward only (incremental LearningEvent).
+// Replays of the same feedback_id are no-ops that return already-applied updates.
+func (s *Service) ApplyFeedbackReward(
 	ctx context.Context,
-	tenantID, episodeID string,
-	episodeReward, confidence float64,
+	tenantID, episodeID, feedbackID string,
+	reward, confidence float64,
 ) ([]UtilityUpdate, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(episodeID) == "" || strings.TrimSpace(feedbackID) == "" {
+		return nil, fmt.Errorf("tenant_id, episode_id, and feedback_id are required")
+	}
+
+	existing, err := s.events.ListByFeedback(ctx, tenantID, feedbackID)
+	if err != nil {
+		return nil, fmt.Errorf("list learning events for feedback %s: %w", feedbackID, err)
+	}
+	if len(existing) > 0 {
+		return s.replayApplied(ctx, tenantID, existing)
+	}
+
 	usages, err := s.usages.ListByEpisode(ctx, tenantID, episodeID)
 	if err != nil {
 		return nil, fmt.Errorf("list usages for episode %s: %w", episodeID, err)
@@ -128,39 +159,112 @@ func (s *Service) ApplyEpisodeReward(
 		return nil, nil
 	}
 
-	credits, err := s.strategy.Attribute(usages, episodeReward)
+	credits, err := s.strategy.Attribute(usages, reward)
 	if err != nil {
-		return nil, fmt.Errorf("attribute reward for episode %s: %w", episodeID, err)
+		return nil, fmt.Errorf("attribute reward for feedback %s: %w", feedbackID, err)
 	}
 	if err := attribution.ValidateCredits(credits); err != nil {
-		return nil, fmt.Errorf("invalid attribution for episode %s: %w", episodeID, err)
+		return nil, fmt.Errorf("invalid attribution for feedback %s: %w", feedbackID, err)
 	}
 
 	now := s.now()
 	updates := make([]UtilityUpdate, 0, len(credits))
 	for _, c := range credits {
+		effective := experience.EffectiveReward(reward, confidence, c.Weight)
+		ev := Event{
+			ID:               s.id(),
+			TenantID:         tenantID,
+			FeedbackID:       feedbackID,
+			EpisodeID:        episodeID,
+			ExperienceID:     c.ExperienceID,
+			NormalizedReward: reward,
+			Confidence:       confidence,
+			Credit:           c.Weight,
+			EffectiveReward:  effective,
+			Status:           EventPending,
+			CreatedAt:        now,
+		}
+		created, err := s.events.Create(ctx, ev)
+		if err != nil {
+			if errors.Is(err, ErrDuplicateEvent) {
+				// concurrent create: treat as already handled
+				dup, getErr := s.events.GetByFeedbackExperience(ctx, tenantID, feedbackID, c.ExperienceID)
+				if getErr != nil {
+					return updates, getErr
+				}
+				u, replayErr := s.snapshotUpdate(ctx, tenantID, dup)
+				if replayErr != nil {
+					return updates, replayErr
+				}
+				updates = append(updates, u)
+				continue
+			}
+			return updates, fmt.Errorf("create learning event for experience %s: %w", c.ExperienceID, err)
+		}
+
 		exp, err := s.experiences.Get(ctx, tenantID, c.ExperienceID)
 		if err != nil {
+			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
 			return updates, fmt.Errorf("get experience %s: %w", c.ExperienceID, err)
 		}
 		old := exp.Utility
-		expReward := episodeReward * c.Weight
+		// experience reward for beta update is reward*credit; confidence applied inside ApplyBetaUpdate
+		expReward := reward * c.Weight
 		updated, err := experience.ApplyBetaUpdate(exp, expReward, confidence, now)
 		if err != nil {
+			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
 			return updates, fmt.Errorf("beta update experience %s: %w", c.ExperienceID, err)
 		}
 		if _, err := s.experiences.Update(ctx, updated); err != nil {
+			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
 			return updates, fmt.Errorf("persist utility for experience %s: %w", c.ExperienceID, err)
 		}
+		if err := s.events.MarkApplied(ctx, tenantID, created.ID, now); err != nil {
+			return updates, fmt.Errorf("mark learning event applied: %w", err)
+		}
 		updates = append(updates, UtilityUpdate{
-			ExperienceID: c.ExperienceID,
-			Credit:       c.Weight,
-			Reward:       expReward,
-			OldUtility:   old,
-			NewUtility:   updated.Utility,
-			Alpha:        updated.Alpha,
-			Beta:         updated.Beta,
+			ExperienceID:    c.ExperienceID,
+			LearningEventID: created.ID,
+			Credit:          c.Weight,
+			Reward:          expReward,
+			EffectiveReward: effective,
+			OldUtility:      old,
+			NewUtility:      updated.Utility,
+			Alpha:           updated.Alpha,
+			Beta:            updated.Beta,
 		})
 	}
 	return updates, nil
+}
+
+func (s *Service) replayApplied(ctx context.Context, tenantID string, events []Event) ([]UtilityUpdate, error) {
+	out := make([]UtilityUpdate, 0, len(events))
+	for _, ev := range events {
+		u, err := s.snapshotUpdate(ctx, tenantID, ev)
+		if err != nil {
+			return nil, err
+		}
+		u.AlreadyApplied = true
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+func (s *Service) snapshotUpdate(ctx context.Context, tenantID string, ev Event) (UtilityUpdate, error) {
+	exp, err := s.experiences.Get(ctx, tenantID, ev.ExperienceID)
+	if err != nil {
+		return UtilityUpdate{}, err
+	}
+	return UtilityUpdate{
+		ExperienceID:    ev.ExperienceID,
+		LearningEventID: ev.ID,
+		Credit:          ev.Credit,
+		Reward:          ev.NormalizedReward * ev.Credit,
+		EffectiveReward: ev.EffectiveReward,
+		OldUtility:      exp.Utility,
+		NewUtility:      exp.Utility,
+		Alpha:           exp.Alpha,
+		Beta:            exp.Beta,
+		AlreadyApplied:  ev.Status == EventApplied,
+	}, nil
 }

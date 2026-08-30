@@ -43,3 +43,8 @@ func ApplyBetaUpdate(exp Experience, experienceReward, confidence float64, now t
 	exp.Version++
 	return exp, nil
 }
+
+// EffectiveReward is reward × confidence × credit for one learning event.
+func EffectiveReward(reward, confidence, credit float64) float64 {
+	return reward * confidence * credit
+}

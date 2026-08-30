@@ -11,26 +11,28 @@ type FeedbackLearner struct {
 	Inner *Service
 }
 
-// ApplyEpisodeReward implements feedback.UtilityLearner.
-func (f FeedbackLearner) ApplyEpisodeReward(
+// ApplyFeedbackReward implements feedback.UtilityLearner.
+func (f FeedbackLearner) ApplyFeedbackReward(
 	ctx context.Context,
-	tenantID, episodeID string,
-	episodeReward, confidence float64,
+	tenantID, episodeID, feedbackID string,
+	reward, confidence float64,
 ) ([]feedback.UtilityChange, error) {
 	if f.Inner == nil {
 		return nil, nil
 	}
-	updates, err := f.Inner.ApplyEpisodeReward(ctx, tenantID, episodeID, episodeReward, confidence)
+	updates, err := f.Inner.ApplyFeedbackReward(ctx, tenantID, episodeID, feedbackID, reward, confidence)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]feedback.UtilityChange, 0, len(updates))
 	for _, u := range updates {
 		out = append(out, feedback.UtilityChange{
-			ExperienceID: u.ExperienceID,
-			OldUtility:   u.OldUtility,
-			NewUtility:   u.NewUtility,
-			Credit:       u.Credit,
+			ExperienceID:    u.ExperienceID,
+			OldUtility:      u.OldUtility,
+			NewUtility:      u.NewUtility,
+			Credit:          u.Credit,
+			EffectiveReward: u.EffectiveReward,
+			AlreadyApplied:  u.AlreadyApplied,
 		})
 	}
 	return out, nil

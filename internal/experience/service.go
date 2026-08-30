@@ -34,6 +34,7 @@ type CreateInput struct {
 	Trigger         string
 	Content         string
 	SourceEpisodeID string
+	Evidence        Evidence
 	Confidence      float64
 	Status          Status
 	Embedding       []float32
@@ -75,6 +76,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Experience, error
 		Trigger:         strings.TrimSpace(in.Trigger),
 		Content:         strings.TrimSpace(in.Content),
 		SourceEpisodeID: strings.TrimSpace(in.SourceEpisodeID),
+		Evidence:        in.Evidence,
 		Confidence:      in.Confidence,
 		Utility:         0.5,
 		Alpha:           1,

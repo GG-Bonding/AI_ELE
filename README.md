@@ -8,11 +8,9 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 ## Status
 
-**Phase 10** — Evaluation harness (four arms + Jira learning-loop E2E).
+**V1 hardening in progress** — Phase 0–10 scaffolding exists; do **not** treat V1 as complete until the [V1 fix checklist](docs/v1-hardening.md) P0/P1 items pass review.
 
-V1 core loop is complete. See [docs/evaluation.md](docs/evaluation.md).
-
-See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md).
+See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), [docs/domain-model.md](docs/domain-model.md), [docs/evaluation.md](docs/evaluation.md).
 
 ## Quick start
 
@@ -76,4 +74,4 @@ make test-eval
 
 ## License
 
-Apache-2.0 (intended; LICENSE file added when publishing).
+Apache-2.0 — see [LICENSE](LICENSE).

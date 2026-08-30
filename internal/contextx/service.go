@@ -52,7 +52,7 @@ type Request struct {
 	TenantID       string
 	AgentID        string
 	UserID         string
-	EpisodeID      string // optional; when set, KEEP/ABSTRACT context entries are tracked
+	EpisodeID      string // optional; when set, KEEP/COMPRESS context entries are tracked
 	Task           string
 	Tools          []string
 	MaxExperiences int

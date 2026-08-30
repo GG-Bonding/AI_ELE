@@ -1,0 +1,47 @@
+package retrieval_test
+
+import (
+	"testing"
+
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
+)
+
+func TestAuthorizedToolHardFilter(t *testing.T) {
+	t.Parallel()
+	exp := experience.Experience{Scope: experience.ScopeTool, ScopeKey: "slack"}
+	if retrieval.Authorized(exp, retrieval.Query{Tools: []string{"jira"}}) {
+		t.Fatal("slack tool tip must not authorize for jira tools")
+	}
+	if !retrieval.Authorized(exp, retrieval.Query{Tools: []string{"slack.post"}}) {
+		t.Fatal("slack tip should authorize for slack.post prefix")
+	}
+	if !retrieval.Authorized(exp, retrieval.Query{}) {
+		t.Fatal("TOOL scope without tools constraint should soft-allow")
+	}
+	if retrieval.Authorized(exp, retrieval.Query{Tools: []string{"jira"}}) {
+		t.Fatal("slack tip must not authorize for jira tools")
+	}
+}
+
+func TestAuthorizedUserAndAgentHardFilter(t *testing.T) {
+	t.Parallel()
+	userExp := experience.Experience{Scope: experience.ScopeUser, ScopeKey: "u1"}
+	if retrieval.Authorized(userExp, retrieval.Query{UserID: "u2"}) {
+		t.Fatal("user scope must isolate")
+	}
+	if !retrieval.Authorized(userExp, retrieval.Query{UserID: "u1"}) {
+		t.Fatal("matching user should authorize")
+	}
+	if !retrieval.Authorized(userExp, retrieval.Query{}) {
+		t.Fatal("USER scope without user_id should soft-allow")
+	}
+
+	agentExp := experience.Experience{Scope: experience.ScopeAgent, ScopeKey: "a1"}
+	if retrieval.Authorized(agentExp, retrieval.Query{AgentID: "a2"}) {
+		t.Fatal("agent scope must isolate")
+	}
+	if !retrieval.Authorized(agentExp, retrieval.Query{AgentID: "a1"}) {
+		t.Fatal("matching agent should authorize")
+	}
+}

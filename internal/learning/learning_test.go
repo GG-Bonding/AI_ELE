@@ -2,6 +2,7 @@ package learning_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
@@ -14,6 +15,125 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 )
+
+func TestIncrementalFeedbackDoesNotReplayAggregate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	usageRepo := experience.NewMemoryUsageRepository()
+	eventRepo := learning.NewMemoryEventRepository()
+	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault())
+	if err != nil {
+		t.Fatalf("learning: %v", err)
+	}
+	epSvc := episode.NewService(episode.NewMemoryRepository())
+	fbSvc := feedback.NewServiceWithLearner(
+		feedback.NewMemoryRepository(), epSvc, nil, learning.FeedbackLearner{Inner: learnSvc},
+	)
+
+	vec := []float32{1, 0, 0, 0}
+	exp, err := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "jira tip", Content: "search project first", Confidence: 0.9, Embedding: vec,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ep, err := epSvc.CreateEpisode(ctx, episode.CreateEpisodeInput{
+		TenantID: "t", AgentID: "a", UserID: "u", Goal: "jira",
+	})
+	if err != nil {
+		t.Fatalf("episode: %v", err)
+	}
+	if _, _, err := epSvc.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
+		TenantID: "t", EpisodeID: ep.ID, Status: episode.StatusSuccess,
+	}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if _, err := usageRepo.Create(ctx, experience.Usage{
+		ID: "u1", TenantID: "t", EpisodeID: ep.ID, ExperienceID: exp.ID, FinalScore: 1,
+	}); err != nil {
+		t.Fatalf("usage: %v", err)
+	}
+
+	// alpha=1 beta=1 utility=.5
+	got, _ := expSvc.Get(ctx, "t", exp.ID)
+	if got.Alpha != 1 || got.Beta != 1 || math.Abs(got.Utility-0.5) > 1e-9 {
+		t.Fatalf("initial %#v", got)
+	}
+
+	r1 := 1.0
+	if _, err := fbSvc.Submit(ctx, feedback.SubmitInput{
+		TenantID: "t", EpisodeID: ep.ID, Source: "business", Reward: &r1, Confidence: 1,
+	}); err != nil {
+		t.Fatalf("F1: %v", err)
+	}
+	after1, _ := expSvc.Get(ctx, "t", exp.ID)
+	if math.Abs(after1.Alpha-2) > 1e-9 || math.Abs(after1.Beta-1) > 1e-9 {
+		t.Fatalf("after F1 want alpha=2 beta=1 got %#v", after1)
+	}
+
+	r2 := -1.0
+	if _, err := fbSvc.Submit(ctx, feedback.SubmitInput{
+		TenantID: "t", EpisodeID: ep.ID, Source: "business", Reward: &r2, Confidence: 1,
+	}); err != nil {
+		t.Fatalf("F2: %v", err)
+	}
+	after2, _ := expSvc.Get(ctx, "t", exp.ID)
+	if math.Abs(after2.Alpha-2) > 1e-9 || math.Abs(after2.Beta-2) > 1e-9 {
+		t.Fatalf("after F2 want alpha=2 beta=2 got %#v (aggregate replay bug?)", after2)
+	}
+	if math.Abs(after2.Utility-0.5) > 1e-9 {
+		t.Fatalf("utility=%v want 0.5", after2.Utility)
+	}
+}
+
+func TestFeedbackIdempotencyDoesNotDoubleLearn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	usageRepo := experience.NewMemoryUsageRepository()
+	learnSvc, _ := learning.New(usageRepo, expRepo, attribution.NewDefault())
+	epSvc := episode.NewService(episode.NewMemoryRepository())
+	fbSvc := feedback.NewServiceWithLearner(
+		feedback.NewMemoryRepository(), epSvc, nil, learning.FeedbackLearner{Inner: learnSvc},
+	)
+
+	exp, _ := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "t", Content: "c", Confidence: 0.9, Embedding: []float32{1},
+	})
+	ep, _ := epSvc.CreateEpisode(ctx, episode.CreateEpisodeInput{TenantID: "t", AgentID: "a", UserID: "u", Goal: "g"})
+	_, _, _ = epSvc.CompleteEpisode(ctx, episode.CompleteEpisodeInput{TenantID: "t", EpisodeID: ep.ID, Status: episode.StatusSuccess})
+	_, _ = usageRepo.Create(ctx, experience.Usage{ID: "u1", TenantID: "t", EpisodeID: ep.ID, ExperienceID: exp.ID, FinalScore: 1})
+
+	r := 1.0
+	res1, err := fbSvc.Submit(ctx, feedback.SubmitInput{
+		TenantID: "t", EpisodeID: ep.ID, Source: "business", Reward: &r, Confidence: 1,
+		IdempotencyKey: "idem-1",
+	})
+	if err != nil {
+		t.Fatalf("submit1: %v", err)
+	}
+	after1, _ := expSvc.Get(ctx, "t", exp.ID)
+
+	res2, err := fbSvc.Submit(ctx, feedback.SubmitInput{
+		TenantID: "t", EpisodeID: ep.ID, Source: "business", Reward: &r, Confidence: 1,
+		IdempotencyKey: "idem-1",
+	})
+	if err != nil {
+		t.Fatalf("submit2: %v", err)
+	}
+	if !res2.IdempotentReplay || res2.Feedback.ID != res1.Feedback.ID {
+		t.Fatalf("expected idempotent replay: %#v %#v", res1, res2)
+	}
+	after2, _ := expSvc.Get(ctx, "t", exp.ID)
+	if after2.Alpha != after1.Alpha || after2.Beta != after1.Beta {
+		t.Fatalf("utility changed on replay: %#v -> %#v", after1, after2)
+	}
+}
 
 func TestSuccessRaisesUtilityAndChangesRanking(t *testing.T) {
 	t.Parallel()
@@ -52,8 +172,7 @@ func TestSuccessRaisesUtilityAndChangesRanking(t *testing.T) {
 	vec, _ := embedder.Embed(ctx, []string{task})
 	used, err := expSvc.Create(ctx, experience.CreateInput{
 		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
-		Trigger:    task,
-		Content:    "Resolve project key before create_issue",
+		Trigger: task, Content: "Resolve project key before create_issue",
 		Confidence: 0.9, Embedding: vec[0],
 	})
 	if err != nil {
@@ -83,9 +202,7 @@ func TestSuccessRaisesUtilityAndChangesRanking(t *testing.T) {
 	}
 
 	built, err := contextSvc.BuildContext(ctx, contextx.Request{
-		TenantID: "t", EpisodeID: ep.ID,
-		Task:  task,
-		Tools: []string{"jira"}, MaxExperiences: 5,
+		TenantID: "t", EpisodeID: ep.ID, Task: task, Tools: []string{"jira"}, MaxExperiences: 5,
 	})
 	if err != nil {
 		t.Fatalf("BuildContext: %v", err)
@@ -171,9 +288,9 @@ func TestFailureLowersUtility(t *testing.T) {
 		ID: "u1", TenantID: "t", EpisodeID: "ep1", ExperienceID: exp.ID, FinalScore: 0.5,
 	})
 	before := exp.Utility
-	updates, err := learnSvc.ApplyEpisodeReward(ctx, "t", "ep1", -1.0, 1.0)
+	updates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb1", -1.0, 1.0)
 	if err != nil {
-		t.Fatalf("ApplyEpisodeReward: %v", err)
+		t.Fatalf("ApplyFeedbackReward: %v", err)
 	}
 	if len(updates) != 1 || !(updates[0].NewUtility < before) {
 		t.Fatalf("%#v", updates)

@@ -10,6 +10,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/learning"
@@ -245,9 +246,10 @@ func (e *Engine) runOne(ctx context.Context, arm Arm, idx int, task string) (Tas
 	tr.Tokens = tokens
 	tr.Latency = time.Since(start)
 
-	decision := decideFromContext(kept)
+	decision := executeWithSimulator(kept)
 	tr.Success = decision.success
 	tr.UsedExperience = decision.usedHelpful
+	// Negative transfer: top advice was harmful and the simulator rejected the attempt.
 	tr.NegativeTransfer = decision.negativeTransfer
 
 	status := episode.StatusFailed
@@ -300,26 +302,32 @@ type agentDecision struct {
 	negativeTransfer bool
 }
 
-func decideFromContext(contents []string) agentDecision {
-	joined := strings.ToLower(strings.Join(contents, "\n"))
-	hasHelpful := strings.Contains(joined, "resolve project key") || strings.Contains(joined, "search project")
-	hasHarmful := strings.Contains(joined, "display name") || strings.Contains(joined, "payment as project")
-	switch {
-	case hasHarmful && !hasHelpful:
-		return agentDecision{success: false, negativeTransfer: true}
-	case hasHarmful && hasHelpful:
-		first := ""
-		if len(contents) > 0 {
-			first = strings.ToLower(contents[0])
+// executeWithSimulator plans tool calls from context, then lets the Jira simulator
+// decide success/failure (V1-05: no keyword-based success labels).
+func executeWithSimulator(contents []string) agentDecision {
+	sim := jirasim.New()
+	policy := jirasim.AgentPolicy{}
+	calls := policy.Plan("Create a Jira issue for payment timeout", contents)
+	ok, _ := sim.Run(calls)
+
+	// Label helpful/harmful from the same first-match rule the planner uses.
+	topHelpful, topHarmful := false, false
+	for _, content := range contents {
+		lower := strings.ToLower(content)
+		if strings.Contains(lower, "resolve project key") || strings.Contains(lower, "search project") || strings.Contains(lower, "project key before") {
+			topHelpful = true
+			break
 		}
-		if strings.Contains(first, "display name") || strings.Contains(first, "payment as project") {
-			return agentDecision{success: false, negativeTransfer: true}
+		if strings.Contains(lower, "display name") || strings.Contains(lower, "payment as project") {
+			topHarmful = true
+			break
 		}
-		return agentDecision{success: true, usedHelpful: true}
-	case hasHelpful:
-		return agentDecision{success: true, usedHelpful: true}
-	default:
-		return agentDecision{success: false}
+	}
+
+	return agentDecision{
+		success:          ok,
+		usedHelpful:      topHelpful && ok,
+		negativeTransfer: topHarmful && !ok,
 	}
 }
 

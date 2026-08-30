@@ -169,12 +169,15 @@ func cloneExperience(exp Experience) Experience {
 		out.Embedding = append([]float32(nil), exp.Embedding...)
 	}
 	if exp.SupersedesID != nil {
-		s := *exp.SupersedesID
-		out.SupersedesID = &s
+		id := *exp.SupersedesID
+		out.SupersedesID = &id
 	}
 	if exp.LastUsedAt != nil {
 		t := *exp.LastUsedAt
 		out.LastUsedAt = &t
+	}
+	if exp.Evidence.AttemptIDs != nil {
+		out.Evidence.AttemptIDs = append([]string(nil), exp.Evidence.AttemptIDs...)
 	}
 	return out
 }

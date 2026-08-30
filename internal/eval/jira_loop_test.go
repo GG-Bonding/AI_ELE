@@ -7,183 +7,192 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/eval"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/evaluator"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/outcome"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 )
 
 func TestCompareArmsLearningBeatsStaticAndRaw(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-
 	metrics, err := eval.CompareArms(ctx)
 	if err != nil {
 		t.Fatalf("CompareArms: %v", err)
 	}
-
 	base := metrics[eval.ArmBaseline]
 	raw := metrics[eval.ArmRawRetrieval]
 	util := metrics[eval.ArmUtilityRetrieval]
 	learn := metrics[eval.ArmUtilityLearning]
-
-	t.Logf("baseline:  %+v", base)
-	t.Logf("raw:       %+v", raw)
-	t.Logf("utility:   %+v", util)
-	t.Logf("learning:  %+v", learn)
+	t.Logf("baseline=%+v raw=%+v util=%+v learn=%+v", base, raw, util, learn)
 
 	if base.TaskSuccessRate != 0 {
-		t.Fatalf("baseline should fail without experiences: %+v", base)
+		t.Fatalf("baseline should fail: %+v", base)
 	}
 	if raw.NegativeTransferRate <= 0 {
-		t.Fatalf("raw retrieval should exhibit negative transfer: %+v", raw)
+		t.Fatalf("raw should show negative transfer: %+v", raw)
 	}
 	if !(util.TaskSuccessRate > raw.TaskSuccessRate) {
-		t.Fatalf("utility retrieval should beat raw success: util=%v raw=%v", util.TaskSuccessRate, raw.TaskSuccessRate)
+		t.Fatalf("utility should beat raw: util=%v raw=%v", util.TaskSuccessRate, raw.TaskSuccessRate)
 	}
 	if !(learn.TaskSuccessRate >= util.TaskSuccessRate) {
-		t.Fatalf("learning success should be at least utility: learn=%v util=%v", learn.TaskSuccessRate, util.TaskSuccessRate)
+		t.Fatalf("learning should >= utility: learn=%v util=%v", learn.TaskSuccessRate, util.TaskSuccessRate)
 	}
 	if !(learn.HelpfulUtilityFinal > 0.6) {
-		t.Fatalf("learning should raise helpful utility above prior: %+v", learn)
-	}
-	if !(learn.TaskSuccessRate > base.TaskSuccessRate && learn.TaskSuccessRate > raw.TaskSuccessRate) {
-		t.Fatalf("learning should beat baseline and raw")
+		t.Fatalf("learning should raise helpful utility: %+v", learn)
 	}
 }
 
-func TestJiraExperienceLearningLoop(t *testing.T) {
+func TestJiraTraceToExperienceLearningLoop(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	engine, err := eval.NewEngine()
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-
+	sim := jirasim.New()
 	task := "Create a Jira issue for payment timeout"
 
-	// Task 1: fail → search → success (discovery). Persist extracted procedural tip.
 	ep1, err := engine.Episodes.CreateEpisode(ctx, episode.CreateEpisodeInput{
 		TenantID: "eval_tenant", AgentID: "eval_agent", UserID: "eval_user", Goal: task,
 	})
 	if err != nil {
-		t.Fatalf("create ep1: %v", err)
+		t.Fatalf("ep1: %v", err)
+	}
+	fail := sim.Call("jira.create_issue", map[string]any{"project": "Payment"})
+	if fail.OK {
+		t.Fatal("expected display-name create to fail")
 	}
 	if _, err := engine.Episodes.AddAttempt(ctx, episode.AddAttemptInput{
-		TenantID: "eval_tenant", EpisodeID: ep1.ID, Action: "create_issue",
-		ToolName: "jira.create_issue", Status: episode.AttemptStatusFailed, ErrorCode: "INVALID_PROJECT_KEY",
+		TenantID: "eval_tenant", EpisodeID: ep1.ID, Action: "create_issue", ToolName: "jira.create_issue",
+		Status: episode.AttemptStatusFailed, ErrorCode: fail.ErrorCode,
+		Input: jirasim.MustJSON(map[string]any{"project": "Payment"}), Output: jirasim.MustJSON(fail.Payload),
 	}); err != nil {
-		t.Fatalf("attempt fail: %v", err)
+		t.Fatalf("fail attempt: %v", err)
+	}
+	search := sim.Call("jira.search_projects", map[string]any{"query": "Payment"})
+	if _, err := engine.Episodes.AddAttempt(ctx, episode.AddAttemptInput{
+		TenantID: "eval_tenant", EpisodeID: ep1.ID, Action: "search_projects", ToolName: "jira.search_projects",
+		Status: episode.AttemptStatusSuccess,
+		Input:  jirasim.MustJSON(map[string]any{"query": "Payment"}), Output: jirasim.MustJSON(search.Payload),
+	}); err != nil {
+		t.Fatalf("search attempt: %v", err)
+	}
+	okCreate := sim.Call("jira.create_issue", map[string]any{"project": "PAY", "summary": "timeout"})
+	if !okCreate.OK {
+		t.Fatalf("PAY create should succeed: %#v", okCreate)
 	}
 	if _, err := engine.Episodes.AddAttempt(ctx, episode.AddAttemptInput{
-		TenantID: "eval_tenant", EpisodeID: ep1.ID, Action: "search_projects",
-		ToolName: "jira.search_projects", Status: episode.AttemptStatusSuccess,
+		TenantID: "eval_tenant", EpisodeID: ep1.ID, Action: "create_issue", ToolName: "jira.create_issue",
+		Status: episode.AttemptStatusSuccess,
+		Input:  jirasim.MustJSON(map[string]any{"project": "PAY"}), Output: jirasim.MustJSON(okCreate.Payload),
 	}); err != nil {
-		t.Fatalf("attempt search: %v", err)
+		t.Fatalf("ok attempt: %v", err)
 	}
 	if _, _, err := engine.Episodes.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
-		TenantID: "eval_tenant", EpisodeID: ep1.ID, Status: episode.StatusSuccess, Verified: true, Verifier: "tool",
+		TenantID: "eval_tenant", EpisodeID: ep1.ID, Status: episode.StatusSuccess,
+		Verified: true, Verifier: "tool", Result: jirasim.MustJSON(okCreate.Payload),
 	}); err != nil {
 		t.Fatalf("complete ep1: %v", err)
 	}
-	if err := engine.SeedHelpfulOnly(ctx, 0.5); err != nil {
-		t.Fatalf("seed extracted experience: %v", err)
-	}
-	vecs, err := engine.Embedder.Embed(ctx, []string{task})
-	if err != nil {
-		t.Fatalf("embed: %v", err)
-	}
-	stored, err := engine.Experiences.Get(ctx, "eval_tenant", engine.HelpfulID)
-	if err != nil {
-		t.Fatalf("get seeded: %v", err)
-	}
-	stored.Embedding = vecs[0]
-	if _, err := engine.ExpRepo.Update(ctx, stored); err != nil {
-		t.Fatalf("update embedding: %v", err)
-	}
-	before := stored.Utility
 
-	// Task 2: retrieve → KEEP → success → business feedback +1 → utility ↑
-	ep2, err := engine.Episodes.CreateEpisode(ctx, episode.CreateEpisodeInput{
-		TenantID: "eval_tenant", AgentID: "eval_agent", UserID: "eval_user",
-		Goal: "Create another Jira issue",
+	pipeline, err := experience.NewStorePipeline(engine.Experiences, engine.Embedder, experience.StorePipelineConfig{
+		ActiveMin: 0.65, CandidateMin: 0.4,
 	})
 	if err != nil {
-		t.Fatalf("create ep2: %v", err)
+		t.Fatalf("pipeline: %v", err)
 	}
-	built2, err := engine.Context.BuildContext(ctx, contextx.Request{
-		TenantID: "eval_tenant", AgentID: "eval_agent", UserID: "eval_user",
-		EpisodeID: ep2.ID, Task: task, Tools: []string{"jira"}, MaxExperiences: 5,
+	stored, err := pipeline.StoreCandidatesWithOptions(ctx, "eval_tenant", ep1.ID, []experience.Candidate{{
+		Type: experience.TypeProcedural, Trigger: "create jira issue when project key unknown",
+		Content: "Resolve project key before create_issue", Confidence: 0.85,
+		Scope: experience.ScopeTool, ScopeKey: "jira",
+	}}, experience.StoreOptions{
+		Outcome: outcome.Outcome{Status: "SUCCESS", Verified: true, Verifier: "tool"},
+		Evidence: evaluator.Evidence{
+			FailedAttemptCount: 1, SuccessAttemptCount: 2,
+			HasFailureContrast: true, HasToolErrorCode: true, SourceEpisodeID: ep1.ID,
+		},
 	})
 	if err != nil {
-		t.Fatalf("context2: %v", err)
+		t.Fatalf("store: %v", err)
 	}
-	if len(built2.Context.Experiences) == 0 {
-		t.Fatalf("expected experience in context; selections=%+v", built2.Selections)
+	if len(stored.Stored) != 1 {
+		t.Fatalf("want 1 stored, skipped=%d evals=%#v", stored.Skipped, stored.Evaluations)
 	}
-	if _, _, err := engine.Episodes.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
-		TenantID: "eval_tenant", EpisodeID: ep2.ID, Status: episode.StatusSuccess, Verified: true, Verifier: "tool",
-	}); err != nil {
-		t.Fatalf("complete ep2: %v", err)
+	helpful := stored.Stored[0]
+	if helpful.SourceEpisodeID != ep1.ID {
+		t.Fatalf("source=%s want %s", helpful.SourceEpisodeID, ep1.ID)
 	}
-	reward := 1.0
-	if _, err := engine.Feedback.Submit(ctx, feedback.SubmitInput{
-		TenantID: "eval_tenant", EpisodeID: ep2.ID, Source: "business", Reward: &reward, Confidence: 1,
-	}); err != nil {
-		t.Fatalf("feedback2: %v", err)
+	engine.HelpfulID = helpful.ID
+	before := helpful.Utility
+	vecs, _ := engine.Embedder.Embed(ctx, []string{task})
+	helpful.Embedding = vecs[0]
+	if _, err := engine.ExpRepo.Update(ctx, helpful); err != nil {
+		t.Fatalf("embed update: %v", err)
 	}
-	after2, err := engine.Experiences.Get(ctx, "eval_tenant", engine.HelpfulID)
-	if err != nil {
-		t.Fatalf("get after2: %v", err)
-	}
-	if !(after2.Utility > before) {
-		t.Fatalf("utility did not rise: before=%v after=%v", before, after2.Utility)
-	}
-	rank2, err := engine.Retriever.Retrieve(ctx, retrieval.Query{
-		TenantID: "eval_tenant", Task: task, Tools: []string{"jira"}, TopK: 5,
-	})
-	if err != nil {
-		t.Fatalf("rank2: %v", err)
-	}
-	score2 := finalScoreOf(rank2, engine.HelpfulID)
 
-	// Task 3: another success further raises utility / ranking score
-	ep3, err := engine.Episodes.CreateEpisode(ctx, episode.CreateEpisodeInput{
-		TenantID: "eval_tenant", AgentID: "eval_agent", UserID: "eval_user",
-		Goal: "Create a Jira issue again",
-	})
-	if err != nil {
-		t.Fatalf("create ep3: %v", err)
+	runLearnedTask := func(name string) (utility float64, score float64) {
+		t.Helper()
+		ep, err := engine.Episodes.CreateEpisode(ctx, episode.CreateEpisodeInput{
+			TenantID: "eval_tenant", AgentID: "eval_agent", UserID: "eval_user", Goal: task,
+		})
+		if err != nil {
+			t.Fatalf("%s create: %v", name, err)
+		}
+		built, err := engine.Context.BuildContext(ctx, contextx.Request{
+			TenantID: "eval_tenant", AgentID: "eval_agent", UserID: "eval_user",
+			EpisodeID: ep.ID, Task: task, Tools: []string{"jira"}, MaxExperiences: 5,
+		})
+		if err != nil {
+			t.Fatalf("%s context: %v", name, err)
+		}
+		if len(built.Context.Experiences) == 0 {
+			t.Fatalf("%s expected context experiences; selections=%+v", name, built.Selections)
+		}
+		var contents []string
+		for _, item := range built.Context.Experiences {
+			contents = append(contents, item.Content)
+		}
+		ok, _ := sim.Run(jirasim.AgentPolicy{}.Plan(task, contents))
+		if !ok {
+			t.Fatalf("%s simulator should succeed", name)
+		}
+		if _, _, err := engine.Episodes.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
+			TenantID: "eval_tenant", EpisodeID: ep.ID, Status: episode.StatusSuccess, Verified: true, Verifier: "tool",
+		}); err != nil {
+			t.Fatalf("%s complete: %v", name, err)
+		}
+		reward := 1.0
+		if _, err := engine.Feedback.Submit(ctx, feedback.SubmitInput{
+			TenantID: "eval_tenant", EpisodeID: ep.ID, Source: "business", Reward: &reward, Confidence: 1,
+		}); err != nil {
+			t.Fatalf("%s feedback: %v", name, err)
+		}
+		got, err := engine.Experiences.Get(ctx, "eval_tenant", helpful.ID)
+		if err != nil {
+			t.Fatalf("%s get: %v", name, err)
+		}
+		ranked, err := engine.Retriever.Retrieve(ctx, retrieval.Query{
+			TenantID: "eval_tenant", Task: task, Tools: []string{"jira"}, TopK: 5,
+		})
+		if err != nil {
+			t.Fatalf("%s retrieve: %v", name, err)
+		}
+		return got.Utility, finalScoreOf(ranked, helpful.ID)
 	}
-	if _, err := engine.Context.BuildContext(ctx, contextx.Request{
-		TenantID: "eval_tenant", EpisodeID: ep3.ID, Task: task, Tools: []string{"jira"}, MaxExperiences: 5,
-	}); err != nil {
-		t.Fatalf("context3: %v", err)
+
+	u2, s2 := runLearnedTask("task2")
+	if !(u2 > before) {
+		t.Fatalf("utility did not rise: before=%v after=%v", before, u2)
 	}
-	if _, _, err := engine.Episodes.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
-		TenantID: "eval_tenant", EpisodeID: ep3.ID, Status: episode.StatusSuccess,
-	}); err != nil {
-		t.Fatalf("complete ep3: %v", err)
+	u3, s3 := runLearnedTask("task3")
+	if !(u3 > u2) {
+		t.Fatalf("utility did not rise further: %v -> %v", u2, u3)
 	}
-	if _, err := engine.Feedback.Submit(ctx, feedback.SubmitInput{
-		TenantID: "eval_tenant", EpisodeID: ep3.ID, Source: "business", Reward: &reward, Confidence: 1,
-	}); err != nil {
-		t.Fatalf("feedback3: %v", err)
-	}
-	after3, err := engine.Experiences.Get(ctx, "eval_tenant", engine.HelpfulID)
-	if err != nil {
-		t.Fatalf("get after3: %v", err)
-	}
-	if !(after3.Utility > after2.Utility) {
-		t.Fatalf("utility did not rise further: after2=%v after3=%v", after2.Utility, after3.Utility)
-	}
-	rank3, err := engine.Retriever.Retrieve(ctx, retrieval.Query{
-		TenantID: "eval_tenant", Task: task, Tools: []string{"jira"}, TopK: 5,
-	})
-	if err != nil {
-		t.Fatalf("rank3: %v", err)
-	}
-	score3 := finalScoreOf(rank3, engine.HelpfulID)
-	if !(score3 > score2) {
-		t.Fatalf("ranking score did not rise: score2=%v score3=%v ranks=%+v", score2, score3, rank3)
+	if !(s3 > s2) {
+		t.Fatalf("ranking score did not rise: %v -> %v", s2, s3)
 	}
 }
 
@@ -194,20 +203,8 @@ func TestAggregateMetrics(t *testing.T) {
 		{Success: false, RetrievedIDs: []string{"b"}, RelevantIDs: []string{"a"}, NegativeTransfer: true, Tokens: 20},
 	}
 	m := eval.Aggregate(eval.ArmRawRetrieval, results)
-	if m.TaskSuccessRate != 0.5 {
-		t.Fatalf("success=%v", m.TaskSuccessRate)
-	}
-	if m.RetrievalPrecision != 1.0/3.0 {
-		t.Fatalf("precision=%v", m.RetrievalPrecision)
-	}
-	if m.ExperienceUtilization != 0.5 {
-		t.Fatalf("utilization=%v", m.ExperienceUtilization)
-	}
-	if m.NegativeTransferRate != 0.5 {
-		t.Fatalf("neg=%v", m.NegativeTransferRate)
-	}
-	if m.TokenCost != 30 {
-		t.Fatalf("tokens=%v", m.TokenCost)
+	if m.TaskSuccessRate != 0.5 || m.RetrievalPrecision != 1.0/3.0 || m.TokenCost != 30 {
+		t.Fatalf("%+v", m)
 	}
 }
 

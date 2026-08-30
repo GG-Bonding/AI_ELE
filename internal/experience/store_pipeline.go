@@ -5,21 +5,23 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/evaluator"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/outcome"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 )
 
-// StorePipeline embeds candidates and persists qualifying experiences.
+// StorePipeline embeds candidates and persists qualifying experiences via Evaluator.
 type StorePipeline struct {
-	svc          *Service
-	embedder     provider.EmbeddingProvider
-	activeMin    float64
-	candidateMin float64
+	svc      *Service
+	embedder provider.EmbeddingProvider
+	eval     evaluator.Evaluator
 }
 
-// StorePipelineConfig configures quality thresholds.
+// StorePipelineConfig configures quality thresholds when using the default rule evaluator.
 type StorePipelineConfig struct {
 	ActiveMin    float64
 	CandidateMin float64
+	Evaluator    evaluator.Evaluator
 }
 
 // NewStorePipeline constructs a store pipeline.
@@ -30,35 +32,55 @@ func NewStorePipeline(svc *Service, embedder provider.EmbeddingProvider, cfg Sto
 	if embedder == nil {
 		return nil, fmt.Errorf("embedding provider is required")
 	}
-	if cfg.ActiveMin == 0 {
-		cfg.ActiveMin = 0.65
+	ev := cfg.Evaluator
+	if ev == nil {
+		ev = evaluator.NewRuleEvaluator(cfg.ActiveMin, cfg.CandidateMin)
 	}
-	if cfg.CandidateMin == 0 {
-		cfg.CandidateMin = 0.4
-	}
-	return &StorePipeline{
-		svc:          svc,
-		embedder:     embedder,
-		activeMin:    cfg.ActiveMin,
-		candidateMin: cfg.CandidateMin,
-	}, nil
+	return &StorePipeline{svc: svc, embedder: embedder, eval: ev}, nil
 }
 
 // StoreCandidatesResult summarizes persistence after extraction.
 type StoreCandidatesResult struct {
-	Stored  []Experience
-	Skipped int
+	Stored      []Experience
+	Evaluations []evaluator.Evaluation
+	Skipped     int
 }
 
-// StoreCandidates embeds and stores candidates that pass quality thresholds.
+// StoreOptions carries episode outcome/evidence into evaluation.
+type StoreOptions struct {
+	Outcome  outcome.Outcome
+	Evidence evaluator.Evidence
+}
+
+// StoreCandidates embeds and stores candidates that pass the evaluator.
 func (p *StorePipeline) StoreCandidates(
 	ctx context.Context,
 	tenantID, sourceEpisodeID string,
 	candidates []Candidate,
 ) (StoreCandidatesResult, error) {
+	return p.StoreCandidatesWithOptions(ctx, tenantID, sourceEpisodeID, candidates, StoreOptions{})
+}
+
+// StoreCandidatesWithOptions evaluates with outcome/evidence context.
+func (p *StorePipeline) StoreCandidatesWithOptions(
+	ctx context.Context,
+	tenantID, sourceEpisodeID string,
+	candidates []Candidate,
+	opts StoreOptions,
+) (StoreCandidatesResult, error) {
 	var result StoreCandidatesResult
 	if len(candidates) == 0 {
 		return result, nil
+	}
+
+	evidence := opts.Evidence
+	if evidence.SourceEpisodeID == "" {
+		evidence.SourceEpisodeID = sourceEpisodeID
+	}
+	out := opts.Outcome
+	if out.Status == "" {
+		out.Status = "SUCCESS"
+		out.Verified = false
 	}
 
 	texts := make([]string, len(candidates))
@@ -74,8 +96,12 @@ func (p *StorePipeline) StoreCandidates(
 	}
 
 	for i, c := range candidates {
-		status, ok := StatusFromConfidence(c.Confidence, p.activeMin, p.candidateMin)
-		if !ok {
+		eval, err := p.eval.Evaluate(ctx, toEvalInput(c), evidence, out)
+		if err != nil {
+			return result, fmt.Errorf("evaluate candidate %d: %w", i, err)
+		}
+		result.Evaluations = append(result.Evaluations, eval)
+		if !eval.Store {
 			result.Skipped++
 			continue
 		}
@@ -87,8 +113,9 @@ func (p *StorePipeline) StoreCandidates(
 			Trigger:         c.Trigger,
 			Content:         c.Content,
 			SourceEpisodeID: sourceEpisodeID,
-			Confidence:      c.Confidence,
-			Status:          status,
+			Evidence:        toStoredEvidence(evidence),
+			Confidence:      eval.Quality,
+			Status:          Status(eval.Status),
 			Embedding:       vectors[i],
 		})
 		if err != nil {
@@ -97,4 +124,25 @@ func (p *StorePipeline) StoreCandidates(
 		result.Stored = append(result.Stored, created)
 	}
 	return result, nil
+}
+
+func toEvalInput(c Candidate) evaluator.CandidateInput {
+	return evaluator.CandidateInput{
+		Type:       string(c.Type),
+		Trigger:    c.Trigger,
+		Content:    c.Content,
+		Confidence: c.Confidence,
+		Scope:      string(c.Scope),
+		ScopeKey:   c.ScopeKey,
+	}
+}
+
+func toStoredEvidence(e evaluator.Evidence) Evidence {
+	return Evidence{
+		FailedAttemptCount:  e.FailedAttemptCount,
+		SuccessAttemptCount: e.SuccessAttemptCount,
+		HasFailureContrast:  e.HasFailureContrast,
+		HasToolErrorCode:    e.HasToolErrorCode,
+		SourceEpisodeID:     e.SourceEpisodeID,
+	}
 }

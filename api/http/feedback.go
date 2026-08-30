@@ -8,13 +8,14 @@ import (
 )
 
 type submitFeedbackRequest struct {
-	TenantID   string   `json:"tenant_id"`
-	EpisodeID  string   `json:"episode_id"`
-	Source     string   `json:"source"`
-	Signal     string   `json:"signal"`
-	Reward     *float64 `json:"reward"`
-	Confidence float64  `json:"confidence"`
-	Evidence   string   `json:"evidence"`
+	TenantID       string   `json:"tenant_id"`
+	EpisodeID      string   `json:"episode_id"`
+	Source         string   `json:"source"`
+	Signal         string   `json:"signal"`
+	Reward         *float64 `json:"reward"`
+	Confidence     float64  `json:"confidence"`
+	Evidence       string   `json:"evidence"`
+	IdempotencyKey string   `json:"idempotency_key"`
 }
 
 func (s *Server) handleSubmitFeedback(w http.ResponseWriter, r *http.Request) {
@@ -30,19 +31,24 @@ func (s *Server) handleSubmitFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := s.feedbacks.Submit(r.Context(), feedback.SubmitInput{
-		TenantID:   req.TenantID,
-		EpisodeID:  req.EpisodeID,
-		Source:     req.Source,
-		Signal:     req.Signal,
-		Reward:     req.Reward,
-		Confidence: req.Confidence,
-		Evidence:   req.Evidence,
+		TenantID:       req.TenantID,
+		EpisodeID:      req.EpisodeID,
+		Source:         req.Source,
+		Signal:         req.Signal,
+		Reward:         req.Reward,
+		Confidence:     req.Confidence,
+		Evidence:       req.Evidence,
+		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeFeedbackError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, res)
+	status := http.StatusCreated
+	if res.IdempotentReplay {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, res)
 }
 
 func (s *Server) handleGetEpisodeReward(w http.ResponseWriter, r *http.Request) {
