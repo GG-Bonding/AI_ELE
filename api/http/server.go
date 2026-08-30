@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/action"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episodelearn"
@@ -81,6 +82,14 @@ type FeedbackService interface {
 	GetEpisodeReward(ctx context.Context, tenantID, episodeID string) (feedback.EpisodeReward, []feedback.Feedback, error)
 }
 
+// ActionService records agent actions and experience→action influence links.
+type ActionService interface {
+	RecordAction(ctx context.Context, in action.RecordInput) (action.AgentAction, error)
+	ListActions(ctx context.Context, tenantID, episodeID string) ([]action.AgentAction, error)
+	LinkExperience(ctx context.Context, in action.LinkInput) (action.ExperienceActionLink, error)
+	ListLinks(ctx context.Context, tenantID, episodeID string) ([]action.ExperienceActionLink, error)
+}
+
 // Server is the HTTP API surface.
 type Server struct {
 	logger        *slog.Logger
@@ -93,6 +102,7 @@ type Server struct {
 	learning      EpisodeLearningProcessor
 	contexts      ContextService
 	feedbacks     FeedbackService
+	actions       ActionService
 	mux           *http.ServeMux
 }
 
@@ -106,6 +116,7 @@ type Options struct {
 	Learning      EpisodeLearningProcessor
 	Contexts      ContextService
 	Feedbacks     FeedbackService
+	Actions       ActionService
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -121,6 +132,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		learning:      opts.Learning,
 		contexts:      opts.Contexts,
 		feedbacks:     opts.Feedbacks,
+		actions:       opts.Actions,
 		mux:           http.NewServeMux(),
 	}
 	s.routes()
@@ -144,6 +156,11 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("POST /api/v1/feedback", s.handleSubmitFeedback)
 	s.mux.HandleFunc("GET /api/v1/episodes/{id}/reward", s.handleGetEpisodeReward)
+
+	s.mux.HandleFunc("POST /api/v1/episodes/{id}/actions", s.handleRecordAction)
+	s.mux.HandleFunc("GET /api/v1/episodes/{id}/actions", s.handleListActions)
+	s.mux.HandleFunc("POST /api/v1/episodes/{id}/actions/{action_id}/links", s.handleLinkExperienceToAction)
+	s.mux.HandleFunc("GET /api/v1/episodes/{id}/action-links", s.handleListActionLinks)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

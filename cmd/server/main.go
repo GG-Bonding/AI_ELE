@@ -11,6 +11,7 @@ import (
 	"time"
 
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/action"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
@@ -63,6 +64,7 @@ func run() error {
 	}
 
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
+	actionSvc := action.NewService(postgres.NewActionRepository(db), episodeSvc)
 	experienceRepo := postgres.NewExperienceRepository(db)
 	experienceSvc := experience.NewService(experienceRepo)
 	usageRepo := postgres.NewUsageRepository(db)
@@ -83,6 +85,7 @@ func run() error {
 		Episodes:    episodeSvc,
 		Experiences: experienceSvc,
 		Feedbacks:   feedbackSvc,
+		Actions:     actionSvc,
 	}
 
 	if cfg.LLM.Enabled {

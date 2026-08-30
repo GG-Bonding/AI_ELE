@@ -10,15 +10,20 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 **V1 Complete** — Core runtime learning loop is implemented and validated.
 
+**V2 in progress** — Experience Intelligence (Attribution → Conflict → Generalization → Evolution).
+
+**V2-1 landed:** Action Tracking + ExperienceActionLink (foundation for precise attribution).
+
 ```text
 Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Idempotent Store
 → Authorized Retrieval → Select → Context → Agent/Simulator → Outcome
 → Feedback → Attribution → LearningEvent → Atomic Utility Update → Better Ranking
 ```
 
-See [docs/v1-hardening.md](docs/v1-hardening.md) for the closed checklist.
+See [docs/v1-hardening.md](docs/v1-hardening.md) for the closed V1 checklist.
+See [docs/v2.md](docs/v2.md) for the V2 plan.
 
-**V1.1 hardening (next):**
+**Also tracked (V2-0 / V1.1 ops):**
 - stale `PROCESSING` recovery for episode learning / learning events
 - Postgres integration CI (service container + `go test` against real pgvector)
 

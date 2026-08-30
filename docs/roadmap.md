@@ -1,8 +1,10 @@
 # Roadmap
 
-**Current:** V1 Complete. Next: V1.1 (stale PROCESSING recovery, Postgres integration CI).
+**Current:** V2 in progress — **V2-1 Action Tracking** shipped as foundation.
 
-Development is strictly phased. Do not skip ahead. One phase → one suggested commit.
+V1 Complete. V1.1 (stale PROCESSING recovery, Postgres integration CI) remains tracked as **V2-0** ops hardening and may run in parallel; it does not reopen the V1 learning-loop contract.
+
+Development is strictly phased within V2. Preferred order: V2-1 → V2-2 → V2-3 → V2-4. See [docs/v2.md](v2.md).
 
 ## Phase 0 — Bootstrap ✅
 
@@ -76,8 +78,24 @@ Core E2E: Jira project-key learning loop (three tasks)
 
 ## V1 Definition of Done ✅
 
-**Met on `main`.** Follow-ups: V1.1 stale PROCESSING recovery; Postgres integration CI.
+**Met on `main`.** Ops follow-ups tracked as V2-0 / V1.1.
 
+See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key learning loop.
 
-See product prompt §三十八. Core proof is the Jira project-key learning loop (three tasks).
-See [docs/evaluation.md](evaluation.md).
+## V2 — Experience Intelligence
+
+| Phase | Status |
+| --- | --- |
+| V2-0 V1.1 hardening (stale PROCESSING + Postgres CI) | planned |
+| V2-1 Action Tracking + ExperienceActionLink | ✅ in progress / landed |
+| V2-2 Feedback Targeting | planned |
+| V2-3 Attribution v2 | planned |
+| V2-4 Semantic Dedup | planned |
+| V2-5 Conflict Detection | planned |
+| V2-6 Supersession (intelligence) | planned |
+| V2-7 Generalization → Pattern | planned |
+| V2-8 Pattern Learning | planned |
+| V2-9 Skill Candidate | planned |
+| V2-10 Sequential benchmark | planned |
+
+Full DoD and architecture: [docs/v2.md](v2.md).

@@ -13,6 +13,24 @@ A complete task execution bound to tenant / agent / user.
 
 Ordered tries within an Episode (hypothesis, action, tool I/O, errors).
 
+## AgentAction (V2)
+
+Concrete steps the agent took — attribution graph nodes (distinct from Attempt trial logs).
+
+| Type | Meaning |
+| --- | --- |
+| `TOOL_CALL` | Tool invocation |
+| `PLAN` | Planning step |
+| `DECISION` | Decision point |
+| `ANSWER` | Final/user-facing answer |
+| `WORKFLOW_STEP` | Multi-step workflow unit |
+
+## ExperienceActionLink (V2)
+
+`Experience → Action` influence edge (`influence ∈ [0,1]`, optional evidence). Foundation for V2 attribution (not retrieval-score credit sharing).
+
+APIs: `POST/GET .../episodes/{id}/actions`, `POST .../actions/{action_id}/links`, `GET .../action-links`.
+
 ## Outcome
 
 Terminal result of an Episode: status, payload, verification source, metrics.
