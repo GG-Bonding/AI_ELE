@@ -40,3 +40,23 @@ Also run the product E2E learning loop:
 ```bash
 go test ./internal/eval/ -run TestJiraExperienceLearningLoop -v
 ```
+
+## V2-10 Sequential Benchmark (PATH-like)
+
+Compares V1 utility-only vs V2 conflict/supersession intelligence on a probe/train schedule:
+
+```text
+probe → positive train → probe → negative pressure → probe
+```
+
+```bash
+go test ./internal/eval/ -run TestSequentialV2BeatsV1 -v
+```
+
+Expected shape:
+
+```text
+V2 task success        > V1 task success
+V2 negative-transfer   < V1 negative-transfer
+V2 post-conflict probe ≈ 1.0 after SUPERSEDES
+```

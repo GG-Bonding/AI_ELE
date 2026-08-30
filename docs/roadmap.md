@@ -1,6 +1,6 @@
 # Roadmap
 
-**Current:** V2 in progress — **V2-9 Skill Candidate** landed (after V2-1…V2-8).
+**Current:** V2 DoD met — **V2-10 Sequential Benchmark** landed (after V2-1…V2-9).
 
 V1 Complete. V1.1 (stale PROCESSING recovery, Postgres integration CI) remains tracked as **V2-0** ops hardening and may run in parallel; it does not reopen the V1 learning-loop contract.
 
@@ -96,6 +96,6 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2-7 Generalization → Pattern | ✅ landed |
 | V2-8 Pattern Learning | ✅ landed |
 | V2-9 Skill Candidate | ✅ landed |
-| V2-10 Sequential benchmark | planned |
+| V2-10 Sequential benchmark | ✅ landed |
 
 Full DoD and architecture: [docs/v2.md](v2.md).
