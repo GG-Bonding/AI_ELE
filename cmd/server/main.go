@@ -15,6 +15,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/episodelearn"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
@@ -138,6 +139,16 @@ func run() error {
 		logger.Info("experience retrieval enabled", "model", cfg.Embedding.Model, "dimensions", cfg.Embedding.Dimensions)
 	} else {
 		logger.Info("experience retrieval disabled")
+	}
+
+	if opts.Extractor != nil && opts.StorePipeline != nil {
+		learnJobs := episodelearn.NewMemoryRepository()
+		processor, err := episodelearn.NewProcessor(opts.Extractor, opts.StorePipeline, learnJobs)
+		if err != nil {
+			return fmt.Errorf("init episode learning processor: %w", err)
+		}
+		opts.Learning = processor
+		logger.Info("episode learning processor enabled")
 	}
 
 	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, opts)

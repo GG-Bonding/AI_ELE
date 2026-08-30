@@ -9,20 +9,20 @@ Do **not** mark V1 Complete until P0 + required P1 items below are done and re-r
 | V1-01 | Incremental LearningEvent (no aggregate replay) | done |
 | V1-02 | Feedback idempotency (`idempotency_key`) | done |
 | V1-03 | Reward + confidence paired per feedback | done |
-| V1-04 | Trace → Extract → Store E2E (no SeedHelpfulOnly) | done (store-pipeline path; arms still seed for compare) |
+| V1-04 | Trace → Extract → Store E2E (no SeedHelpfulOnly) | done (extractor path in jira loop + episodelearn processor) |
 | V1-05 | Tool simulator / real Outcome (no keyword success) | done |
-| V1-06 | Independent ExperienceEvaluator | done |
-| V1-07 | LearningEvent PENDING → APPLIED consistency | done |
+| V1-06 | Independent ExperienceEvaluator | done (production feeds Outcome+Evidence) |
+| V1-07 | LearningEvent PENDING → APPLIED consistency + FAILED retry | done |
 
 ## P1 (must for enterprise readiness)
 
 | ID | Item | Status |
 | --- | --- | --- |
-| V1-08 | Experience Evidence | done |
-| V1-09–11 | Scope hard authorization filters | done |
+| V1-08 | Experience Evidence (`FromAttempts`, AttemptIDs, OutcomeID) | done |
+| V1-09–11 | Scope hard authorization filters (fail-closed + search pre-TopK) | done |
 | V1-12 | Remove Latin-only lexical gate | done |
 | V1-13 | Rename ABSTRACT → COMPRESS (honest) | done |
-| V1-14–15 | Trace sanitizer + untrusted prompt boundary | done |
+| V1-14–15 | Trace sanitizer + structured JSON redaction + untrusted prompt boundary | done |
 | V1-16 | Action relevance in attribution | suggested |
 
 ## P2 (required for full V1 validation)
@@ -33,9 +33,10 @@ Do **not** mark V1 Complete until P0 + required P1 items below are done and re-r
 | V1-18 | Experience dedup | suggested |
 | V1-19 | Conflict candidate hints | suggested |
 | V1-20–22 | Multi-domain / real-agent eval | partial (jira+github simulators) |
-| V1-23 | Restart persistence check | suggested |
+| V1-23 | Restart persistence check | partial (episodelearn job status; pg persistence still suggested) |
 | V1-24 | Concurrent utility updates | done (optimistic lock + retry) |
 | V1-25 | Apache-2.0 LICENSE file | done |
+| V1-26 | Episode learning job status (PENDING/APPLIED/FAILED) + retry endpoint | done (memory repo; postgres migration optional) |
 
 ## Acceptance spine
 
@@ -49,3 +50,16 @@ unseen task → Episode/Attempts/Outcome
 ```
 
 No `SeedHelpfulOnly`, no keyword-based success, no hand-written Experience mid-test.
+Production `CompleteOutcome` passes real Outcome + Evidence via `StoreCandidatesWithOptions`.
+
+
+## Latest hardening pass (post-review)
+
+Addressed the 6 blockers from the production/E2E consistency review:
+
+1. Production `StoreCandidatesWithOptions` with real Outcome + Evidence (`evaluator.FromAttempts`)
+2. Jira learning-loop E2E goes through Extractor + MockLLM (no hand-written candidates)
+3. LearningEvent PENDING/FAILED are retried (APPLIED-only short-circuit)
+4. USER/AGENT/TOOL authorization fail-closed and applied before TopK in search
+5. Structured JSON sanitizer (recursive redact → valid JSON)
+6. Episode learning job status PENDING/PROCESSING/APPLIED/FAILED + `/learning/retry`

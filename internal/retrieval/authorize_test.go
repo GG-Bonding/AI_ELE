@@ -16,8 +16,8 @@ func TestAuthorizedToolHardFilter(t *testing.T) {
 	if !retrieval.Authorized(exp, retrieval.Query{Tools: []string{"slack.post"}}) {
 		t.Fatal("slack tip should authorize for slack.post prefix")
 	}
-	if !retrieval.Authorized(exp, retrieval.Query{}) {
-		t.Fatal("TOOL scope without tools constraint should soft-allow")
+	if retrieval.Authorized(exp, retrieval.Query{}) {
+		t.Fatal("TOOL scope without tools/scope_key must fail closed")
 	}
 	if retrieval.Authorized(exp, retrieval.Query{Tools: []string{"jira"}}) {
 		t.Fatal("slack tip must not authorize for jira tools")
@@ -33,8 +33,8 @@ func TestAuthorizedUserAndAgentHardFilter(t *testing.T) {
 	if !retrieval.Authorized(userExp, retrieval.Query{UserID: "u1"}) {
 		t.Fatal("matching user should authorize")
 	}
-	if !retrieval.Authorized(userExp, retrieval.Query{}) {
-		t.Fatal("USER scope without user_id should soft-allow")
+	if retrieval.Authorized(userExp, retrieval.Query{}) {
+		t.Fatal("USER scope without user_id must fail closed")
 	}
 
 	agentExp := experience.Experience{Scope: experience.ScopeAgent, ScopeKey: "a1"}
@@ -43,5 +43,8 @@ func TestAuthorizedUserAndAgentHardFilter(t *testing.T) {
 	}
 	if !retrieval.Authorized(agentExp, retrieval.Query{AgentID: "a1"}) {
 		t.Fatal("matching agent should authorize")
+	}
+	if retrieval.Authorized(agentExp, retrieval.Query{}) {
+		t.Fatal("AGENT scope without agent_id must fail closed")
 	}
 }

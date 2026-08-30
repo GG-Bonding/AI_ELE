@@ -78,8 +78,9 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 		evidence.SourceEpisodeID = sourceEpisodeID
 	}
 	out := opts.Outcome
+	// Legacy callers without explicit outcome default to UNKNOWN (low score), not SUCCESS.
 	if out.Status == "" {
-		out.Status = "SUCCESS"
+		out.Status = "UNKNOWN"
 		out.Verified = false
 	}
 
@@ -144,5 +145,7 @@ func toStoredEvidence(e evaluator.Evidence) Evidence {
 		HasFailureContrast:  e.HasFailureContrast,
 		HasToolErrorCode:    e.HasToolErrorCode,
 		SourceEpisodeID:     e.SourceEpisodeID,
+		AttemptIDs:          append([]string(nil), e.AttemptIDs...),
+		OutcomeID:           e.OutcomeID,
 	}
 }

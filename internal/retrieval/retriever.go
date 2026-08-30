@@ -87,17 +87,22 @@ func (r *Retriever) Retrieve(ctx context.Context, q Query) ([]RankedExperience, 
 		return nil, fmt.Errorf("embed retrieval task: expected 1 vector, got %d", len(vectors))
 	}
 
-	// Phase 1: semantic candidates, then hard scope authorization (V1-09–11).
+	// Phase 1: semantic candidates (auth filter applied inside Search before TopK).
 	candidates, err := r.experiences.Search(ctx, experience.SearchInput{
 		TenantID:       q.TenantID,
 		Types:          q.Types,
 		Scopes:         q.Scopes,
+		ScopeKey:       q.ScopeKey,
+		AgentID:        q.AgentID,
+		UserID:         q.UserID,
+		Tools:          q.Tools,
 		QueryEmbedding: vectors[0],
 		TopK:           r.rank.CandidateTopK,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("phase1 semantic retrieval: %w", err)
 	}
+	// Defense in depth: FilterAuthorized still applied after Search.
 	candidates = FilterAuthorized(candidates, q)
 
 	// Phase 2: utility-aware ranking (soft scope match remains a score factor).
@@ -141,6 +146,10 @@ func (r *Retriever) RetrieveBySimilarity(ctx context.Context, q Query) ([]Ranked
 		TenantID:       q.TenantID,
 		Types:          q.Types,
 		Scopes:         q.Scopes,
+		ScopeKey:       q.ScopeKey,
+		AgentID:        q.AgentID,
+		UserID:         q.UserID,
+		Tools:          q.Tools,
 		QueryEmbedding: vectors[0],
 		TopK:           r.rank.CandidateTopK,
 	})

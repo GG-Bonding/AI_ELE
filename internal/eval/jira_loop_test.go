@@ -2,6 +2,7 @@ package eval_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
@@ -10,8 +11,10 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/evaluator"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/outcome"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 )
 
@@ -91,11 +94,43 @@ func TestJiraTraceToExperienceLearningLoop(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ok attempt: %v", err)
 	}
-	if _, _, err := engine.Episodes.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
+	_, out, err := engine.Episodes.CompleteEpisode(ctx, episode.CompleteEpisodeInput{
 		TenantID: "eval_tenant", EpisodeID: ep1.ID, Status: episode.StatusSuccess,
 		Verified: true, Verifier: "tool", Result: jirasim.MustJSON(okCreate.Payload),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("complete ep1: %v", err)
+	}
+
+	attempts, err := engine.Episodes.ListAttempts(ctx, "eval_tenant", ep1.ID)
+	if err != nil {
+		t.Fatalf("list attempts: %v", err)
+	}
+
+	mock := &provider.MockLLM{Responses: []string{`{"experiences":[{
+		"type":"PROCEDURAL",
+		"trigger":"create jira issue when project key unknown",
+		"content":"Resolve project key via jira.search_projects before create_issue; INVALID_PROJECT_KEY means use PAY not Payment display name",
+		"confidence":0.85,
+		"scope":"TOOL",
+		"scope_key":"jira"
+	}]}`}}
+	ext, err := extractor.New(mock)
+	if err != nil {
+		t.Fatalf("extractor: %v", err)
+	}
+	cands, err := ext.Extract(ctx, extractor.ExtractInput{Episode: ep1, Attempts: attempts, Outcome: out})
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if len(mock.Calls) == 0 {
+		t.Fatal("expected LLM call")
+	}
+	prompt := mock.Calls[0].User
+	for _, signal := range []string{"INVALID_PROJECT_KEY", "Payment", "PAY"} {
+		if !strings.Contains(prompt, signal) {
+			t.Fatalf("extract prompt missing %q:\n%s", signal, prompt)
+		}
 	}
 
 	pipeline, err := experience.NewStorePipeline(engine.Experiences, engine.Embedder, experience.StorePipelineConfig{
@@ -104,16 +139,10 @@ func TestJiraTraceToExperienceLearningLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pipeline: %v", err)
 	}
-	stored, err := pipeline.StoreCandidatesWithOptions(ctx, "eval_tenant", ep1.ID, []experience.Candidate{{
-		Type: experience.TypeProcedural, Trigger: "create jira issue when project key unknown",
-		Content: "Resolve project key before create_issue", Confidence: 0.85,
-		Scope: experience.ScopeTool, ScopeKey: "jira",
-	}}, experience.StoreOptions{
-		Outcome: outcome.Outcome{Status: "SUCCESS", Verified: true, Verifier: "tool"},
-		Evidence: evaluator.Evidence{
-			FailedAttemptCount: 1, SuccessAttemptCount: 2,
-			HasFailureContrast: true, HasToolErrorCode: true, SourceEpisodeID: ep1.ID,
-		},
+	ev := evaluator.FromAttempts(ep1.ID, out.ID, attempts)
+	stored, err := pipeline.StoreCandidatesWithOptions(ctx, "eval_tenant", ep1.ID, cands, experience.StoreOptions{
+		Outcome:  outcome.Outcome(out),
+		Evidence: ev,
 	})
 	if err != nil {
 		t.Fatalf("store: %v", err)

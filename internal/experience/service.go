@@ -115,6 +115,9 @@ type SearchInput struct {
 	Scopes         []Scope
 	ScopeKey       string
 	Statuses       []Status
+	AgentID        string
+	UserID         string
+	Tools          []string
 	QueryEmbedding []float32
 	TopK           int
 }
@@ -138,6 +141,9 @@ func (s *Service) Search(ctx context.Context, in SearchInput) ([]ScoredExperienc
 		Scopes:         in.Scopes,
 		ScopeKey:       in.ScopeKey,
 		Statuses:       in.Statuses,
+		AgentID:        in.AgentID,
+		UserID:         in.UserID,
+		Tools:          in.Tools,
 		QueryEmbedding: in.QueryEmbedding,
 		TopK:           topK,
 	})

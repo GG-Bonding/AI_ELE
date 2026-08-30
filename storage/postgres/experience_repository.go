@@ -114,6 +114,10 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 	if topK <= 0 {
 		topK = 20
 	}
+	fetchLimit := topK * 4
+	if fetchLimit < topK {
+		fetchLimit = topK
+	}
 
 	args := []any{filter.TenantID, vec}
 	var where []string
@@ -151,7 +155,7 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 		where = append(where, fmt.Sprintf("scope_key = $%d", len(args)))
 	}
 
-	args = append(args, topK)
+	args = append(args, fetchLimit)
 	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 
 	// $2 is query vector; cosine distance <=> ; similarity = 1 - distance
@@ -199,7 +203,17 @@ func (r *ExperienceRepository) Search(ctx context.Context, filter experience.Sea
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate search rows: %w", err)
 	}
-	return out, nil
+
+	filtered := out[:0]
+	for _, row := range out {
+		if experience.AuthorizedForSearch(row.Experience, filter.AgentID, filter.UserID, filter.Tools, filter.ScopeKey) {
+			filtered = append(filtered, row)
+		}
+	}
+	if topK > 0 && len(filtered) > topK {
+		filtered = filtered[:topK]
+	}
+	return filtered, nil
 }
 
 func (r *ExperienceRepository) Supersede(ctx context.Context, tenantID, oldID, newID string) error {

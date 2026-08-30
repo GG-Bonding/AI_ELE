@@ -34,6 +34,8 @@ type Evidence struct {
 	HasFailureContrast  bool // fail then success pattern
 	HasToolErrorCode    bool
 	SourceEpisodeID     string
+	AttemptIDs          []string
+	OutcomeID           string
 }
 
 // Evaluation is the explainable quality decision for a candidate.

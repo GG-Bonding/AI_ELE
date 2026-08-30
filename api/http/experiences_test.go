@@ -67,6 +67,7 @@ func TestExperienceSearchHTTP(t *testing.T) {
 	search := postJSON(t, h, "/api/v1/experiences/search", map[string]any{
 		"tenant_id": "tenant_a",
 		"task":      "Create a Jira issue for payment timeout",
+		"tools":     []string{"jira"},
 		"top_k":     5,
 	}, http.StatusOK)
 	exps, ok := search["experiences"].([]any)

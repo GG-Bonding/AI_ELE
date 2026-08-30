@@ -49,6 +49,69 @@ func (s stubExtractor) Extract(context.Context, extractor.ExtractInput) ([]exper
 	return s.candidates, nil
 }
 
+func newTestServerWithExtractorAndStore(t *testing.T, ext httpserver.ExperienceExtractor, store *recordingStorePipeline) http.Handler {
+	t.Helper()
+	svc := episode.NewService(episode.NewMemoryRepository())
+	return httpserver.New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		stubReady{},
+		httpserver.Options{Episodes: svc, Extractor: ext, StorePipeline: store},
+	).Handler()
+}
+
+type recordingStorePipeline struct {
+	lastOpts experience.StoreOptions
+}
+
+func (s *recordingStorePipeline) StoreCandidates(ctx context.Context, tenantID, sourceEpisodeID string, candidates []experience.Candidate) (experience.StoreCandidatesResult, error) {
+	return s.StoreCandidatesWithOptions(ctx, tenantID, sourceEpisodeID, candidates, experience.StoreOptions{})
+}
+
+func (s *recordingStorePipeline) StoreCandidatesWithOptions(_ context.Context, _, _ string, candidates []experience.Candidate, opts experience.StoreOptions) (experience.StoreCandidatesResult, error) {
+	s.lastOpts = opts
+	stored := make([]experience.Experience, 0, len(candidates))
+	for _, c := range candidates {
+		stored = append(stored, experience.Experience{
+			Type: c.Type, Trigger: c.Trigger, Content: c.Content, Scope: c.Scope, ScopeKey: c.ScopeKey,
+		})
+	}
+	return experience.StoreCandidatesResult{Stored: stored}, nil
+}
+
+func TestFailedOutcomePassesRealStatusToStore(t *testing.T) {
+	t.Parallel()
+	store := &recordingStorePipeline{}
+	h := newTestServerWithExtractorAndStore(t, stubExtractor{
+		candidates: []experience.Candidate{{
+			Type: experience.TypeFailure, Trigger: "jira create failed", Content: "bad key",
+			Confidence: 0.8, Scope: experience.ScopeTool, ScopeKey: "jira",
+		}},
+	}, store)
+
+	ep := postJSON(t, h, "/api/v1/episodes", map[string]any{
+		"tenant_id": "tenant_a", "agent_id": "agent", "user_id": "user", "goal": "Create Jira issue",
+	}, http.StatusCreated)
+	id, _ := ep["id"].(string)
+
+	postJSON(t, h, "/api/v1/episodes/"+id+"/attempts", map[string]any{
+		"tenant_id": "tenant_a", "action": "create_issue", "status": "FAILED", "error_code": "INVALID_PROJECT_KEY",
+	}, http.StatusCreated)
+
+	postJSON(t, h, "/api/v1/episodes/"+id+"/outcome", map[string]any{
+		"tenant_id": "tenant_a", "status": "FAILED",
+	}, http.StatusCreated)
+
+	if store.lastOpts.Outcome.Status != "FAILED" {
+		t.Fatalf("outcome status = %q want FAILED", store.lastOpts.Outcome.Status)
+	}
+	if store.lastOpts.Evidence.FailedAttemptCount != 1 {
+		t.Fatalf("evidence = %#v", store.lastOpts.Evidence)
+	}
+	if store.lastOpts.Outcome.Status == "SUCCESS" {
+		t.Fatal("FAILED episode must not default to SUCCESS evaluation path")
+	}
+}
+
 func TestEpisodeLifecycleHTTP(t *testing.T) {
 	t.Parallel()
 	h := newTestServer(t)

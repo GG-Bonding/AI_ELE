@@ -296,3 +296,53 @@ func TestFailureLowersUtility(t *testing.T) {
 		t.Fatalf("%#v", updates)
 	}
 }
+
+func TestRetryFailedLearningEventUpdatesUtility(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	usageRepo := experience.NewMemoryUsageRepository()
+	eventRepo := learning.NewMemoryEventRepository()
+	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault())
+	if err != nil {
+		t.Fatalf("learning: %v", err)
+	}
+
+	vec := []float32{1, 0}
+	exp, _ := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "t", Content: "c", Confidence: 0.9, Embedding: vec,
+	})
+	_, _ = usageRepo.Create(ctx, experience.Usage{
+		ID: "u1", TenantID: "t", EpisodeID: "ep1", ExperienceID: exp.ID, FinalScore: 1,
+	})
+
+	before := exp.Utility
+	failedEv, err := eventRepo.Create(ctx, learning.Event{
+		ID: "ev-failed", TenantID: "t", FeedbackID: "fb-retry", EpisodeID: "ep1",
+		ExperienceID: exp.ID, NormalizedReward: 1, Confidence: 1, Credit: 1,
+		EffectiveReward: 1, Status: learning.EventFailed,
+	})
+	if err != nil {
+		t.Fatalf("create failed event: %v", err)
+	}
+
+	retryUpdates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-retry", 1.0, 1.0)
+	if err != nil {
+		t.Fatalf("retry apply: %v", err)
+	}
+	if len(retryUpdates) != 1 {
+		t.Fatalf("updates: %#v", retryUpdates)
+	}
+	if !(retryUpdates[0].NewUtility > before) {
+		t.Fatalf("utility did not rise on retry: before=%v after=%v", before, retryUpdates[0].NewUtility)
+	}
+	ev, err := eventRepo.GetByFeedbackExperience(ctx, "t", "fb-retry", exp.ID)
+	if err != nil {
+		t.Fatalf("get event: %v", err)
+	}
+	if ev.Status != learning.EventApplied {
+		t.Fatalf("event %s status = %s want APPLIED", failedEv.ID, ev.Status)
+	}
+}

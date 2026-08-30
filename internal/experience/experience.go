@@ -97,6 +97,11 @@ type SearchFilter struct {
 	ScopeKey string
 	Statuses []Status // empty => ACTIVE + CANDIDATE only
 
+	// Auth constraints (fail-closed scope filter applied before TopK).
+	AgentID string
+	UserID  string
+	Tools   []string
+
 	// QueryEmbedding is required for similarity search.
 	QueryEmbedding []float32
 	TopK           int

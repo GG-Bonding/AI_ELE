@@ -10,6 +10,7 @@ import (
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/episodelearn"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
@@ -38,6 +39,7 @@ type EpisodeService interface {
 	AddAttempt(ctx context.Context, in episode.AddAttemptInput) (episode.Attempt, error)
 	ListAttempts(ctx context.Context, tenantID, episodeID string) ([]episode.Attempt, error)
 	CompleteEpisode(ctx context.Context, in episode.CompleteEpisodeInput) (episode.Episode, episode.Outcome, error)
+	GetOutcome(ctx context.Context, tenantID, episodeID string) (episode.Outcome, error)
 }
 
 // ExperienceExtractor extracts candidates after an episode completes.
@@ -59,6 +61,13 @@ type ExperienceRetriever interface {
 // ExperienceStorePipeline persists extracted candidates.
 type ExperienceStorePipeline interface {
 	StoreCandidates(ctx context.Context, tenantID, sourceEpisodeID string, candidates []experience.Candidate) (experience.StoreCandidatesResult, error)
+	StoreCandidatesWithOptions(ctx context.Context, tenantID, sourceEpisodeID string, candidates []experience.Candidate, opts experience.StoreOptions) (experience.StoreCandidatesResult, error)
+}
+
+// EpisodeLearningProcessor runs extract/store learning for completed episodes.
+type EpisodeLearningProcessor interface {
+	Process(ctx context.Context, in episodelearn.ProcessInput) (episodelearn.ProcessResult, error)
+	Retry(ctx context.Context, tenantID string, ep episode.Episode, attempts []episode.Attempt, out episode.Outcome) (episodelearn.ProcessResult, error)
 }
 
 // ContextService builds agent context from selected experiences.
@@ -81,6 +90,7 @@ type Server struct {
 	experiences   ExperienceService
 	retriever     ExperienceRetriever
 	storePipeline ExperienceStorePipeline
+	learning      EpisodeLearningProcessor
 	contexts      ContextService
 	feedbacks     FeedbackService
 	mux           *http.ServeMux
@@ -93,6 +103,7 @@ type Options struct {
 	Experiences   ExperienceService
 	Retriever     ExperienceRetriever
 	StorePipeline ExperienceStorePipeline
+	Learning      EpisodeLearningProcessor
 	Contexts      ContextService
 	Feedbacks     FeedbackService
 }
@@ -107,6 +118,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		experiences:   opts.Experiences,
 		retriever:     opts.Retriever,
 		storePipeline: opts.StorePipeline,
+		learning:      opts.Learning,
 		contexts:      opts.Contexts,
 		feedbacks:     opts.Feedbacks,
 		mux:           http.NewServeMux(),
@@ -123,6 +135,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/episodes/{id}", s.handleGetEpisode)
 	s.mux.HandleFunc("POST /api/v1/episodes/{id}/attempts", s.handleAddAttempt)
 	s.mux.HandleFunc("POST /api/v1/episodes/{id}/outcome", s.handleCompleteOutcome)
+	s.mux.HandleFunc("POST /api/v1/episodes/{id}/learning/retry", s.handleRetryEpisodeLearning)
 
 	s.mux.HandleFunc("GET /api/v1/experiences/{id}", s.handleGetExperience)
 	s.mux.HandleFunc("POST /api/v1/experiences/search", s.handleSearchExperiences)

@@ -13,6 +13,19 @@ var (
 	phoneRE     = regexp.MustCompile(`\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{4}\b`)
 )
 
+var sensitiveJSONKeys = map[string]struct{}{
+	"authorization": {},
+	"api_key":       {},
+	"access_token":  {},
+	"refresh_token": {},
+	"password":      {},
+	"secret":        {},
+	"client_secret": {},
+	"private_key":   {},
+	"cookie":        {},
+	"set-cookie":    {},
+}
+
 // Config controls optional PII redaction.
 type Config struct {
 	RedactEmail bool
@@ -48,8 +61,45 @@ func JSONBytes(raw json.RawMessage, cfg Config) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
 	}
-	s := Trace(string(raw), cfg)
-	return json.RawMessage(s)
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return json.RawMessage(Trace(string(raw), cfg))
+	}
+	redactValue(doc)
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return json.RawMessage(Trace(string(raw), cfg))
+	}
+	return json.RawMessage(out)
+}
+
+func redactValue(v any) {
+	switch node := v.(type) {
+	case map[string]any:
+		for k, val := range node {
+			if isSensitiveKey(k) {
+				node[k] = "[REDACTED]"
+				continue
+			}
+			redactValue(val)
+		}
+	case []any:
+		for i := range node {
+			redactValue(node[i])
+		}
+	}
+}
+
+func isSensitiveKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"), " ", "_"))
+	if _, ok := sensitiveJSONKeys[normalized]; ok {
+		return true
+	}
+	// api-key style variants
+	if strings.Contains(normalized, "api_key") || strings.Contains(normalized, "access_token") {
+		return true
+	}
+	return false
 }
 
 // UntrustedDataSystemAddon is appended to extractor system prompts.

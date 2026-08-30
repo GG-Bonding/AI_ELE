@@ -1,6 +1,7 @@
 package sanitize_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -21,6 +22,20 @@ password: hunter2
 	}
 	if !strings.Contains(out, "[REDACTED]") && !strings.Contains(out, "REDACTED_TOKEN") {
 		t.Fatalf("expected redaction markers: %q", out)
+	}
+}
+
+func TestJSONBytesRedactsSensitiveKeys(t *testing.T) {
+	t.Parallel()
+	out := sanitize.JSONBytes([]byte(`{"access_token":"tok_123","ok":true}`), sanitize.DefaultConfig())
+	if !json.Valid(out) {
+		t.Fatalf("invalid json: %s", out)
+	}
+	if strings.Contains(string(out), "tok_123") {
+		t.Fatalf("access_token not redacted: %s", out)
+	}
+	if !strings.Contains(string(out), "[REDACTED]") {
+		t.Fatalf("expected [REDACTED] in %s", out)
 	}
 }
 

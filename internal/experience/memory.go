@@ -91,6 +91,16 @@ func (m *MemoryRepository) Search(_ context.Context, filter SearchFilter) ([]Sco
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].Similarity > scored[j].Similarity
 	})
+
+	// Auth filter before TopK so unauthorized rows cannot consume candidate slots.
+	filtered := scored[:0]
+	for _, row := range scored {
+		if AuthorizedForSearch(row.Experience, filter.AgentID, filter.UserID, filter.Tools, filter.ScopeKey) {
+			filtered = append(filtered, row)
+		}
+	}
+	scored = filtered
+
 	if filter.TopK > 0 && len(scored) > filter.TopK {
 		scored = scored[:filter.TopK]
 	}

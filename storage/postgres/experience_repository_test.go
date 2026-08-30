@@ -47,6 +47,7 @@ func TestExperienceRepositoryVectorSearch(t *testing.T) {
 	results, err := retriever.Retrieve(ctx, retrieval.Query{
 		TenantID: "tenant_pg_exp",
 		Task:     "Create another Jira issue when project key is unknown",
+		Tools:    []string{"jira"},
 		TopK:     5,
 	})
 	if err != nil {

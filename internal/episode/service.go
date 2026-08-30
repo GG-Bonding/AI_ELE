@@ -214,6 +214,18 @@ func (s *Service) GetEpisode(ctx context.Context, tenantID, id string) (Episode,
 	return ep, nil
 }
 
+// GetOutcome returns the stored outcome for a completed episode.
+func (s *Service) GetOutcome(ctx context.Context, tenantID, episodeID string) (Outcome, error) {
+	if err := requireNonEmpty("tenant_id", tenantID, "episode_id", episodeID); err != nil {
+		return Outcome{}, err
+	}
+	out, err := s.repo.GetOutcome(ctx, tenantID, episodeID)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("get outcome for episode %s: %w", episodeID, err)
+	}
+	return out, nil
+}
+
 // ListAttempts returns attempts for an episode within a tenant.
 func (s *Service) ListAttempts(ctx context.Context, tenantID, episodeID string) ([]Attempt, error) {
 	if err := requireNonEmpty("tenant_id", tenantID, "episode_id", episodeID); err != nil {
