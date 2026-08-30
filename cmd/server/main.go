@@ -143,7 +143,7 @@ func run() error {
 	}
 
 	if opts.Extractor != nil && opts.StorePipeline != nil {
-		learnJobs := episodelearn.NewMemoryRepository()
+		learnJobs := postgres.NewEpisodeLearningRepository(db)
 		processor, err := episodelearn.NewProcessor(opts.Extractor, opts.StorePipeline, learnJobs)
 		if err != nil {
 			return fmt.Errorf("init episode learning processor: %w", err)

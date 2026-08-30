@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ExperienceRepository implements experience.Repository with PostgreSQL + pgvector.
@@ -29,20 +30,24 @@ func (r *ExperienceRepository) Create(ctx context.Context, exp experience.Experi
 
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO experiences (
-			id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id,
+			id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id, dedup_key,
 			confidence, utility, alpha, beta, success_count, failure_count, use_count,
 			status, version, supersedes_id, embedding, created_at, updated_at, last_used_at, evidence
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,
-			$9,$10,$11,$12,$13,$14,$15,
-			$16,$17,$18,$19::vector,$20,$21,$22,$23
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,
+			$10,$11,$12,$13,$14,$15,$16,
+			$17,$18,$19,$20::vector,$21,$22,$23,$24
 		)
 	`,
-		exp.ID, exp.TenantID, string(exp.Type), string(exp.Scope), exp.ScopeKey, exp.Trigger, exp.Content, exp.SourceEpisodeID,
+		exp.ID, exp.TenantID, string(exp.Type), string(exp.Scope), exp.ScopeKey, exp.Trigger, exp.Content, exp.SourceEpisodeID, exp.DedupKey,
 		exp.Confidence, exp.Utility, exp.Alpha, exp.Beta, exp.SuccessCount, exp.FailureCount, exp.UseCount,
 		string(exp.Status), exp.Version, exp.SupersedesID, vec, exp.CreatedAt, exp.UpdatedAt, exp.LastUsedAt, mustJSON(exp.Evidence),
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && exp.DedupKey != "" {
+			return experience.Experience{}, experience.ErrDuplicateDedup
+		}
 		return experience.Experience{}, fmt.Errorf("insert experience: %w", err)
 	}
 	return exp, nil
@@ -84,6 +89,24 @@ func (r *ExperienceRepository) Update(ctx context.Context, exp experience.Experi
 		return experience.Experience{}, experience.ErrConflict
 	}
 	exp.Version = nextVersion
+	return exp, nil
+}
+
+func (r *ExperienceRepository) GetByEpisodeDedup(ctx context.Context, tenantID, episodeID, dedupKey string) (experience.Experience, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id,
+		       confidence, utility, alpha, beta, success_count, failure_count, use_count,
+		       status, version, supersedes_id, created_at, updated_at, last_used_at, evidence
+		FROM experiences
+		WHERE tenant_id = $1 AND source_episode_id = $2 AND dedup_key = $3
+	`, tenantID, episodeID, dedupKey)
+	exp, err := scanExperience(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return experience.Experience{}, experience.ErrNotFound
+	}
+	if err != nil {
+		return experience.Experience{}, fmt.Errorf("get experience by dedup: %w", err)
+	}
 	return exp, nil
 }
 

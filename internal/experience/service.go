@@ -2,6 +2,7 @@ package experience
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type CreateInput struct {
 	Trigger         string
 	Content         string
 	SourceEpisodeID string
+	DedupKey        string
 	Evidence        Evidence
 	Confidence      float64
 	Status          Status
@@ -79,6 +81,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Experience, error
 		Trigger:         strings.TrimSpace(in.Trigger),
 		Content:         strings.TrimSpace(in.Content),
 		SourceEpisodeID: strings.TrimSpace(in.SourceEpisodeID),
+		DedupKey:        strings.TrimSpace(in.DedupKey),
 		Evidence:        in.Evidence,
 		Confidence:      in.Confidence,
 		Utility:         0.5,
@@ -94,6 +97,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Experience, error
 
 	created, err := s.repo.Create(ctx, exp)
 	if err != nil {
+		if errors.Is(err, ErrDuplicateDedup) && exp.DedupKey != "" && exp.SourceEpisodeID != "" {
+			existing, getErr := s.repo.GetByEpisodeDedup(ctx, exp.TenantID, exp.SourceEpisodeID, exp.DedupKey)
+			if getErr != nil {
+				return Experience{}, fmt.Errorf("create experience: %w", err)
+			}
+			return existing, nil
+		}
 		return Experience{}, fmt.Errorf("create experience: %w", err)
 	}
 	return created, nil

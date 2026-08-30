@@ -9,13 +9,21 @@ import (
 
 // MemoryRepository is an in-memory Experience store for unit tests.
 type MemoryRepository struct {
-	mu   sync.Mutex
-	data map[string]Experience // tenantID/id
+	mu       sync.Mutex
+	data     map[string]Experience // tenantID/id
+	dedupIdx map[string]string     // tenantID/episodeID/dedupKey -> id
 }
 
 // NewMemoryRepository constructs an empty store.
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{data: make(map[string]Experience)}
+	return &MemoryRepository{
+		data:     make(map[string]Experience),
+		dedupIdx: make(map[string]string),
+	}
+}
+
+func dedupIndexKey(tenantID, episodeID, dedupKey string) string {
+	return tenantID + "/" + episodeID + "/" + dedupKey
 }
 
 func key(tenantID, id string) string { return tenantID + "/" + id }
@@ -23,7 +31,15 @@ func key(tenantID, id string) string { return tenantID + "/" + id }
 func (m *MemoryRepository) Create(_ context.Context, exp Experience) (Experience, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if exp.DedupKey != "" && exp.SourceEpisodeID != "" {
+		if _, ok := m.dedupIdx[dedupIndexKey(exp.TenantID, exp.SourceEpisodeID, exp.DedupKey)]; ok {
+			return Experience{}, ErrDuplicateDedup
+		}
+	}
 	m.data[key(exp.TenantID, exp.ID)] = cloneExperience(exp)
+	if exp.DedupKey != "" && exp.SourceEpisodeID != "" {
+		m.dedupIdx[dedupIndexKey(exp.TenantID, exp.SourceEpisodeID, exp.DedupKey)] = exp.ID
+	}
 	return cloneExperience(exp), nil
 }
 
@@ -47,6 +63,20 @@ func (m *MemoryRepository) Update(_ context.Context, exp Experience) (Experience
 func (m *MemoryRepository) Get(_ context.Context, tenantID, id string) (Experience, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	exp, ok := m.data[key(tenantID, id)]
+	if !ok {
+		return Experience{}, ErrNotFound
+	}
+	return cloneExperience(exp), nil
+}
+
+func (m *MemoryRepository) GetByEpisodeDedup(_ context.Context, tenantID, episodeID, dedupKey string) (Experience, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.dedupIdx[dedupIndexKey(tenantID, episodeID, dedupKey)]
+	if !ok {
+		return Experience{}, ErrNotFound
+	}
 	exp, ok := m.data[key(tenantID, id)]
 	if !ok {
 		return Experience{}, ErrNotFound

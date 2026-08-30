@@ -114,6 +114,7 @@ func (p *StorePipeline) StoreCandidatesWithOptions(
 			Trigger:         c.Trigger,
 			Content:         c.Content,
 			SourceEpisodeID: sourceEpisodeID,
+			DedupKey:        Fingerprint(c),
 			Evidence:        toStoredEvidence(evidence),
 			Confidence:      eval.Quality,
 			Status:          Status(eval.Status),

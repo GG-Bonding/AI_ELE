@@ -12,6 +12,8 @@ var (
 	ErrConflict = errors.New("experience version conflict")
 	// ErrInvalidInput is returned for validation failures.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrDuplicateDedup is returned when an experience with the same episode dedup key exists.
+	ErrDuplicateDedup = errors.New("experience dedup conflict")
 )
 
 // Status is the lifecycle state of a stored Experience.
@@ -64,6 +66,7 @@ type Experience struct {
 	Content string `json:"content"`
 
 	SourceEpisodeID string `json:"source_episode_id,omitempty"`
+	DedupKey        string `json:"dedup_key,omitempty"`
 
 	Evidence Evidence `json:"evidence,omitempty"`
 

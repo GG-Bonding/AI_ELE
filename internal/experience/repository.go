@@ -7,6 +7,7 @@ type Repository interface {
 	Create(ctx context.Context, exp Experience) (Experience, error)
 	Update(ctx context.Context, exp Experience) (Experience, error)
 	Get(ctx context.Context, tenantID, id string) (Experience, error)
+	GetByEpisodeDedup(ctx context.Context, tenantID, episodeID, dedupKey string) (Experience, error)
 	Search(ctx context.Context, filter SearchFilter) ([]ScoredExperience, error)
 	Supersede(ctx context.Context, tenantID, oldID, newID string) error
 	Archive(ctx context.Context, tenantID, id string) error

@@ -30,13 +30,13 @@ Do **not** mark V1 Complete until P0 + required P1 items below are done and re-r
 | ID | Item | Status |
 | --- | --- | --- |
 | V1-17 | Split UsageRecency vs Validity | done |
-| V1-18 | Experience dedup | suggested |
+| V1-18 | Experience dedup | done |
 | V1-19 | Conflict candidate hints | suggested |
 | V1-20–22 | Multi-domain / real-agent eval | partial (jira+github simulators) |
-| V1-23 | Restart persistence check | partial (episodelearn job status; pg persistence still suggested) |
+| V1-23 | Restart persistence check | done (episode learning jobs persisted in Postgres) |
 | V1-24 | Concurrent utility updates | done (optimistic lock + retry) |
 | V1-25 | Apache-2.0 LICENSE file | done |
-| V1-26 | Episode learning job status (PENDING/APPLIED/FAILED) + retry endpoint | done (memory repo; postgres migration optional) |
+| V1-26 | Episode learning job status (PENDING/APPLIED/FAILED) + retry endpoint | done (Postgres repo + dedup idempotent store) |
 
 ## Acceptance spine
 
@@ -59,7 +59,7 @@ Addressed the 6 blockers from the production/E2E consistency review:
 
 1. Production `StoreCandidatesWithOptions` with real Outcome + Evidence (`evaluator.FromAttempts`)
 2. Jira learning-loop E2E goes through Extractor + MockLLM (no hand-written candidates)
-3. LearningEvent PENDING/FAILED are retried (APPLIED-only short-circuit)
-4. USER/AGENT/TOOL authorization fail-closed and applied before TopK in search
+3. LearningEvent apply is atomic; retries use event-persisted reward/confidence/credit only
+4. USER/AGENT/TOOL authorization fail-closed (non-empty scope_key) with SQL pre-TopK filter
 5. Structured JSON sanitizer (recursive redact → valid JSON)
-6. Episode learning job status PENDING/PROCESSING/APPLIED/FAILED + `/learning/retry`
+6. Episode learning jobs persisted in Postgres; experience store dedup makes retries idempotent
