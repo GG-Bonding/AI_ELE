@@ -2,8 +2,10 @@ package learning_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
@@ -23,7 +25,7 @@ func TestIncrementalFeedbackDoesNotReplayAggregate(t *testing.T) {
 	expSvc := experience.NewService(expRepo)
 	usageRepo := experience.NewMemoryUsageRepository()
 	eventRepo := learning.NewMemoryEventRepository()
-	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault())
+	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault(), nil)
 	if err != nil {
 		t.Fatalf("learning: %v", err)
 	}
@@ -304,7 +306,7 @@ func TestRetryFailedLearningEventUpdatesUtility(t *testing.T) {
 	expSvc := experience.NewService(expRepo)
 	usageRepo := experience.NewMemoryUsageRepository()
 	eventRepo := learning.NewMemoryEventRepository()
-	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault())
+	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault(), nil)
 	if err != nil {
 		t.Fatalf("learning: %v", err)
 	}
@@ -344,5 +346,107 @@ func TestRetryFailedLearningEventUpdatesUtility(t *testing.T) {
 	}
 	if ev.Status != learning.EventApplied {
 		t.Fatalf("event %s status = %s want APPLIED", failedEv.ID, ev.Status)
+	}
+}
+
+func TestRetryUsesEventPersistedRewardNotCaller(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	usageRepo := experience.NewMemoryUsageRepository()
+	eventRepo := learning.NewMemoryEventRepository()
+	learnSvc, err := learning.NewWithEvents(usageRepo, expRepo, eventRepo, attribution.NewDefault(), nil)
+	if err != nil {
+		t.Fatalf("learning: %v", err)
+	}
+
+	vec := []float32{1, 0}
+	exp, _ := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "t", Content: "c", Confidence: 0.9, Embedding: vec,
+	})
+	_, _ = usageRepo.Create(ctx, experience.Usage{
+		ID: "u1", TenantID: "t", EpisodeID: "ep1", ExperienceID: exp.ID, FinalScore: 1,
+	})
+
+	before := exp.Utility
+	_, err = eventRepo.Create(ctx, learning.Event{
+		ID: "ev-reward", TenantID: "t", FeedbackID: "fb-reward", EpisodeID: "ep1",
+		ExperienceID: exp.ID, NormalizedReward: -1, Confidence: 1, Credit: 1,
+		EffectiveReward: -1, Status: learning.EventFailed,
+	})
+	if err != nil {
+		t.Fatalf("create failed event: %v", err)
+	}
+
+	// Caller passes positive reward; retry must still apply event's -1 reward.
+	retryUpdates, err := learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-reward", 1.0, 1.0)
+	if err != nil {
+		t.Fatalf("retry apply: %v", err)
+	}
+	if len(retryUpdates) != 1 {
+		t.Fatalf("updates: %#v", retryUpdates)
+	}
+	if !(retryUpdates[0].NewUtility < before) {
+		t.Fatalf("utility should drop with event reward -1: before=%v after=%v", before, retryUpdates[0].NewUtility)
+	}
+}
+
+type failMarkAppliedRepo struct {
+	learning.EventRepository
+	fail bool
+}
+
+func (f *failMarkAppliedRepo) MarkApplied(ctx context.Context, tenantID, id string, appliedAt time.Time) error {
+	if f.fail {
+		return fmt.Errorf("forced mark applied failure")
+	}
+	return f.EventRepository.MarkApplied(ctx, tenantID, id, appliedAt)
+}
+
+func TestAtomicApplyRollsBackOnMarkAppliedFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expRepo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(expRepo)
+	baseEvents := learning.NewMemoryEventRepository()
+	eventRepo := &failMarkAppliedRepo{EventRepository: baseEvents, fail: true}
+	applier := learning.NewMemoryEventApplier(expRepo, eventRepo)
+	learnSvc, err := learning.NewWithEvents(
+		experience.NewMemoryUsageRepository(), expRepo, eventRepo, attribution.NewDefault(), applier,
+	)
+	if err != nil {
+		t.Fatalf("learning: %v", err)
+	}
+
+	vec := []float32{1}
+	exp, _ := expSvc.Create(ctx, experience.CreateInput{
+		TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "t", Content: "c", Confidence: 0.9, Embedding: vec,
+	})
+	before, _ := expSvc.Get(ctx, "t", exp.ID)
+
+	_, err = eventRepo.Create(ctx, learning.Event{
+		ID: "ev-atomic", TenantID: "t", FeedbackID: "fb-atomic", EpisodeID: "ep1",
+		ExperienceID: exp.ID, NormalizedReward: 1, Confidence: 1, Credit: 1,
+		EffectiveReward: 1, Status: learning.EventFailed,
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	_, err = learnSvc.ApplyFeedbackReward(ctx, "t", "ep1", "fb-atomic", 1.0, 1.0)
+	if err == nil {
+		t.Fatal("expected apply to fail when MarkApplied fails")
+	}
+
+	after, _ := expSvc.Get(ctx, "t", exp.ID)
+	if after.Alpha != before.Alpha || after.Beta != before.Beta || after.Utility != before.Utility {
+		t.Fatalf("utility changed despite failed apply: before=%#v after=%#v", before, after)
+	}
+	ev, _ := baseEvents.GetByFeedbackExperience(ctx, "t", "fb-atomic", exp.ID)
+	if ev.Status == learning.EventApplied {
+		t.Fatalf("event should not be APPLIED after failure: %#v", ev)
 	}
 }

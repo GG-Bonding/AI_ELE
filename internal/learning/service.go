@@ -18,6 +18,7 @@ type Service struct {
 	usages      experience.UsageRepository
 	experiences experience.Repository
 	events      EventRepository
+	applier     EventApplier
 	strategy    attribution.Strategy
 	now         func() time.Time
 	id          func() string
@@ -25,15 +26,17 @@ type Service struct {
 
 // New constructs a learning service.
 func New(usages experience.UsageRepository, experiences experience.Repository, strategy attribution.Strategy) (*Service, error) {
-	return NewWithEvents(usages, experiences, NewMemoryEventRepository(), strategy)
+	return NewWithEvents(usages, experiences, NewMemoryEventRepository(), strategy, nil)
 }
 
 // NewWithEvents constructs a learning service with a persistent event ledger.
+// When applier is nil, a MemoryEventApplier is used for in-process atomic apply.
 func NewWithEvents(
 	usages experience.UsageRepository,
 	experiences experience.Repository,
 	events EventRepository,
 	strategy attribution.Strategy,
+	applier EventApplier,
 ) (*Service, error) {
 	if usages == nil {
 		return nil, fmt.Errorf("usage repository is required")
@@ -47,10 +50,14 @@ func NewWithEvents(
 	if strategy == nil {
 		strategy = attribution.NewDefault()
 	}
+	if applier == nil {
+		applier = NewMemoryEventApplier(experiences, events)
+	}
 	return &Service{
 		usages:      usages,
 		experiences: experiences,
 		events:      events,
+		applier:     applier,
 		strategy:    strategy,
 		now:         time.Now().UTC,
 		id:          func() string { return uuid.NewString() },
@@ -159,7 +166,7 @@ func (s *Service) ApplyFeedbackReward(
 		if allApplied {
 			return s.replayApplied(ctx, tenantID, existing)
 		}
-		return s.retryExistingEvents(ctx, tenantID, reward, confidence, existing)
+		return s.retryExistingEvents(ctx, tenantID, existing)
 	}
 
 	usages, err := s.usages.ListByEpisode(ctx, tenantID, episodeID)
@@ -193,11 +200,9 @@ func (s *Service) ApplyFeedbackReward(
 func (s *Service) retryExistingEvents(
 	ctx context.Context,
 	tenantID string,
-	reward, confidence float64,
 	events []Event,
 ) ([]UtilityUpdate, error) {
 	out := make([]UtilityUpdate, 0, len(events))
-	now := s.now()
 	for _, ev := range events {
 		switch ev.Status {
 		case EventApplied:
@@ -208,7 +213,7 @@ func (s *Service) retryExistingEvents(
 			u.AlreadyApplied = true
 			out = append(out, u)
 		case EventPending, EventFailed:
-			u, err := s.applyExistingEvent(ctx, tenantID, ev, reward, confidence, now)
+			u, err := s.applyExistingEvent(ctx, tenantID, ev)
 			if err != nil {
 				return out, err
 			}
@@ -222,58 +227,36 @@ func (s *Service) applyExistingEvent(
 	ctx context.Context,
 	tenantID string,
 	ev Event,
-	reward, confidence float64,
-	now time.Time,
 ) (UtilityUpdate, error) {
-	expReward := reward * ev.Credit
-	var (
-		updated experience.Experience
-		oldUtil float64
-	)
 	const maxAttempts = 8
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		exp, err := s.experiences.Get(ctx, tenantID, ev.ExperienceID)
+		result, err := s.applier.ApplyPendingEvent(ctx, tenantID, ev)
 		if err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, ev.ID)
-			return UtilityUpdate{}, fmt.Errorf("get experience %s: %w", ev.ExperienceID, err)
-		}
-		oldUtil = exp.Utility
-		updated, err = experience.ApplyBetaUpdate(exp, expReward, confidence, now)
-		if err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, ev.ID)
-			return UtilityUpdate{}, fmt.Errorf("beta update experience %s: %w", ev.ExperienceID, err)
-		}
-		if _, err := s.experiences.Update(ctx, updated); err != nil {
 			if errors.Is(err, experience.ErrConflict) && attempt+1 < maxAttempts {
 				lastErr = err
 				continue
 			}
 			_ = s.events.MarkFailed(ctx, tenantID, ev.ID)
-			return UtilityUpdate{}, fmt.Errorf("persist utility for experience %s: %w", ev.ExperienceID, err)
+			return UtilityUpdate{}, fmt.Errorf("apply learning event %s: %w", ev.ID, err)
 		}
-		lastErr = nil
-		break
+		expReward := ev.NormalizedReward * ev.Credit
+		u := UtilityUpdate{
+			ExperienceID:    ev.ExperienceID,
+			LearningEventID: ev.ID,
+			Credit:          ev.Credit,
+			Reward:          expReward,
+			EffectiveReward: ev.EffectiveReward,
+			OldUtility:      result.OldUtility,
+			NewUtility:      result.Experience.Utility,
+			Alpha:           result.Experience.Alpha,
+			Beta:            result.Experience.Beta,
+			AlreadyApplied:  result.AlreadyApplied,
+		}
+		return u, nil
 	}
-	if lastErr != nil {
-		_ = s.events.MarkFailed(ctx, tenantID, ev.ID)
-		return UtilityUpdate{}, fmt.Errorf("persist utility for experience %s: %w", ev.ExperienceID, lastErr)
-	}
-	if err := s.markAppliedWithRetry(ctx, tenantID, ev.ID, now); err != nil {
-		// Utility updated but event still FAILED/PENDING — caller may retry ApplyFeedbackReward.
-		return UtilityUpdate{}, fmt.Errorf("mark learning event applied: %w", err)
-	}
-	return UtilityUpdate{
-		ExperienceID:    ev.ExperienceID,
-		LearningEventID: ev.ID,
-		Credit:          ev.Credit,
-		Reward:          expReward,
-		EffectiveReward: ev.EffectiveReward,
-		OldUtility:      oldUtil,
-		NewUtility:      updated.Utility,
-		Alpha:           updated.Alpha,
-		Beta:            updated.Beta,
-	}, nil
+	_ = s.events.MarkFailed(ctx, tenantID, ev.ID)
+	return UtilityUpdate{}, fmt.Errorf("apply learning event %s: %w", ev.ID, lastErr)
 }
 
 func (s *Service) createAndApplyEvent(
@@ -313,74 +296,13 @@ func (s *Service) createAndApplyEvent(
 				u.AlreadyApplied = true
 				return u, nil
 			default:
-				return s.applyExistingEvent(ctx, tenantID, dup, reward, confidence, now)
+				return s.applyExistingEvent(ctx, tenantID, dup)
 			}
 		}
 		return UtilityUpdate{}, fmt.Errorf("create learning event for experience %s: %w", c.ExperienceID, err)
 	}
 
-	expReward := reward * c.Weight
-	var (
-		updated experience.Experience
-		oldUtil float64
-	)
-	const maxAttempts = 8
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		exp, err := s.experiences.Get(ctx, tenantID, c.ExperienceID)
-		if err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-			return UtilityUpdate{}, fmt.Errorf("get experience %s: %w", c.ExperienceID, err)
-		}
-		oldUtil = exp.Utility
-		updated, err = experience.ApplyBetaUpdate(exp, expReward, confidence, now)
-		if err != nil {
-			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-			return UtilityUpdate{}, fmt.Errorf("beta update experience %s: %w", c.ExperienceID, err)
-		}
-		if _, err := s.experiences.Update(ctx, updated); err != nil {
-			if errors.Is(err, experience.ErrConflict) && attempt+1 < maxAttempts {
-				lastErr = err
-				continue
-			}
-			_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-			return UtilityUpdate{}, fmt.Errorf("persist utility for experience %s: %w", c.ExperienceID, err)
-		}
-		lastErr = nil
-		break
-	}
-	if lastErr != nil {
-		_ = s.events.MarkFailed(ctx, tenantID, created.ID)
-		return UtilityUpdate{}, fmt.Errorf("persist utility for experience %s: %w", c.ExperienceID, lastErr)
-	}
-	if err := s.markAppliedWithRetry(ctx, tenantID, created.ID, now); err != nil {
-		return UtilityUpdate{}, fmt.Errorf("mark learning event applied: %w", err)
-	}
-	return UtilityUpdate{
-		ExperienceID:    c.ExperienceID,
-		LearningEventID: created.ID,
-		Credit:          c.Weight,
-		Reward:          expReward,
-		EffectiveReward: effective,
-		OldUtility:      oldUtil,
-		NewUtility:      updated.Utility,
-		Alpha:           updated.Alpha,
-		Beta:            updated.Beta,
-	}, nil
-}
-
-// markAppliedWithRetry best-effort marks an event APPLIED after utility persistence.
-// A gap remains if all retries fail — ApplyFeedbackReward can retry PENDING/FAILED events.
-func (s *Service) markAppliedWithRetry(ctx context.Context, tenantID, id string, appliedAt time.Time) error {
-	var lastErr error
-	for i := 0; i < 3; i++ {
-		if err := s.events.MarkApplied(ctx, tenantID, id, appliedAt); err != nil {
-			lastErr = err
-			continue
-		}
-		return nil
-	}
-	return lastErr
+	return s.applyExistingEvent(ctx, tenantID, created)
 }
 
 func (s *Service) replayApplied(ctx context.Context, tenantID string, events []Event) ([]UtilityUpdate, error) {

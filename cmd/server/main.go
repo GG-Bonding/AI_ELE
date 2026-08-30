@@ -67,7 +67,8 @@ func run() error {
 	experienceSvc := experience.NewService(experienceRepo)
 	usageRepo := postgres.NewUsageRepository(db)
 	eventRepo := postgres.NewLearningEventRepository(db)
-	learnSvc, err := learning.NewWithEvents(usageRepo, experienceRepo, eventRepo, attribution.NewDefault())
+	learnApplier := postgres.NewLearningEventApplier(db)
+	learnSvc, err := learning.NewWithEvents(usageRepo, experienceRepo, eventRepo, attribution.NewDefault(), learnApplier)
 	if err != nil {
 		return fmt.Errorf("init learning service: %w", err)
 	}
