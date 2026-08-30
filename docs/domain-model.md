@@ -53,6 +53,22 @@ Lifecycle: Candidate → Evaluator thresholds → ACTIVE / CANDIDATE / discard �
 
 ## Feedback
 
+External signal about an Episode outcome. Always store raw rows.
+
+### FeedbackTarget (V2)
+
+Optional locator so feedback can say *what* was wrong, not only *that* the episode scored poorly.
+
+| Type | Required fields |
+| --- | --- |
+| `EPISODE` | (none) |
+| `ACTION` | `action_id` |
+| `ACTION_FIELD` | `action_id`, `field` |
+| `TOOL` | `tool_name` |
+| `EXPERIENCE` | `experience_id` |
+
+## Feedback
+
 External signal about an Episode outcome. Always store raw rows; never only the aggregated reward.
 
 Sources & default trust: BUSINESS 1.0, USER_EXPLICIT 1.0, HUMAN_REVIEW 0.95, TOOL 0.85, USER_IMPLICIT 0.60, LLM_JUDGE 0.50.

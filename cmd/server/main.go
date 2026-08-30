@@ -79,7 +79,7 @@ func run() error {
 		episodeSvc,
 		feedback.NewRewardEngine(nil),
 		learning.FeedbackLearner{Inner: learnSvc},
-	)
+	).WithActionVerifier(actionSvc)
 
 	opts := httpserver.Options{
 		Episodes:    episodeSvc,

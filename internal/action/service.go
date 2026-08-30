@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -214,4 +215,17 @@ func cloneJSON(in json.RawMessage) json.RawMessage {
 	out := make(json.RawMessage, len(in))
 	copy(out, in)
 	return out
+}
+
+// ActionInEpisode reports whether actionID belongs to the given episode (tenant-scoped).
+// Implements feedback.ActionVerifier.
+func (s *Service) ActionInEpisode(ctx context.Context, tenantID, episodeID, actionID string) (bool, error) {
+	a, err := s.GetAction(ctx, tenantID, actionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return a.EpisodeID == strings.TrimSpace(episodeID), nil
 }

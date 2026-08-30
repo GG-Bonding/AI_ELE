@@ -12,7 +12,8 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 **V2 in progress** — Experience Intelligence (Attribution → Conflict → Generalization → Evolution).
 
-**V2-1 landed:** Action Tracking + ExperienceActionLink (foundation for precise attribution).
+**V2-1 landed:** Action Tracking + ExperienceActionLink.
+**V2-2 landed:** Feedback Targeting (action / field / experience / tool).
 
 ```text
 Episode → Trace → Sanitize → Extract → Evidence → Evaluate → Idempotent Store

@@ -77,6 +77,7 @@ type FeedbackInput struct {
 	Reward     *float64
 	Confidence float64
 	Evidence   string
+	Target     map[string]any
 }
 
 // FeedbackResult is returned after submitting feedback.
@@ -97,6 +98,7 @@ func (c *Client) Feedback(ctx context.Context, in FeedbackInput) (FeedbackResult
 		"reward":     in.Reward,
 		"confidence": in.Confidence,
 		"evidence":   in.Evidence,
+		"target":     in.Target,
 	}
 	var out FeedbackResult
 	err := c.doJSON(ctx, "POST", "/api/v1/feedback", nil, body, &out)

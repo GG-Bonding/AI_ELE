@@ -8,14 +8,15 @@ import (
 )
 
 type submitFeedbackRequest struct {
-	TenantID       string   `json:"tenant_id"`
-	EpisodeID      string   `json:"episode_id"`
-	Source         string   `json:"source"`
-	Signal         string   `json:"signal"`
-	Reward         *float64 `json:"reward"`
-	Confidence     float64  `json:"confidence"`
-	Evidence       string   `json:"evidence"`
-	IdempotencyKey string   `json:"idempotency_key"`
+	TenantID       string            `json:"tenant_id"`
+	EpisodeID      string            `json:"episode_id"`
+	Source         string            `json:"source"`
+	Signal         string            `json:"signal"`
+	Reward         *float64          `json:"reward"`
+	Confidence     float64           `json:"confidence"`
+	Evidence       string            `json:"evidence"`
+	Target         *feedback.Target  `json:"target"`
+	IdempotencyKey string            `json:"idempotency_key"`
 }
 
 func (s *Server) handleSubmitFeedback(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +39,7 @@ func (s *Server) handleSubmitFeedback(w http.ResponseWriter, r *http.Request) {
 		Reward:         req.Reward,
 		Confidence:     req.Confidence,
 		Evidence:       req.Evidence,
+		Target:         req.Target,
 		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {

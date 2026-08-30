@@ -34,6 +34,7 @@ type UtilityChange struct {
 type Service struct {
 	repo     Repository
 	episodes EpisodeChecker
+	actions  ActionVerifier // optional; validates ACTION / ACTION_FIELD targets
 	engine   *RewardEngine
 	learner  UtilityLearner // optional
 	now      func() time.Time
@@ -60,6 +61,18 @@ func NewServiceWithLearner(repo Repository, episodes EpisodeChecker, engine *Rew
 	}
 }
 
+// WithActionVerifier attaches an optional action ownership checker for targeted feedback.
+func (s *Service) WithActionVerifier(v ActionVerifier) *Service {
+	s.actions = v
+	return s
+}
+
+
+// ActionVerifier optionally confirms an action_id belongs to the feedback episode.
+type ActionVerifier interface {
+	ActionInEpisode(ctx context.Context, tenantID, episodeID, actionID string) (bool, error)
+}
+
 // SubmitInput is one incoming feedback signal.
 type SubmitInput struct {
 	TenantID       string
@@ -69,6 +82,7 @@ type SubmitInput struct {
 	Reward         *float64 // optional when Signal maps to a reward
 	Confidence     float64
 	Evidence       string
+	Target         *Target
 	IdempotencyKey string
 }
 
@@ -118,6 +132,13 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 	}
 	confidence = NormalizeConfidence(confidence)
 
+	if err := ValidateTarget(in.Target); err != nil {
+		return SubmitResult{}, err
+	}
+	if err := s.verifyTargetAction(ctx, in.TenantID, in.EpisodeID, in.Target); err != nil {
+		return SubmitResult{}, err
+	}
+
 	fb := Feedback{
 		ID:             s.id(),
 		TenantID:       strings.TrimSpace(in.TenantID),
@@ -127,6 +148,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 		Reward:         reward,
 		Confidence:     confidence,
 		Evidence:       in.Evidence,
+		Target:         in.Target,
 		IdempotencyKey: key,
 		CreatedAt:      s.now(),
 	}
@@ -221,6 +243,23 @@ func requireNonEmpty(pairs ...string) error {
 		if strings.TrimSpace(pairs[i+1]) == "" {
 			return fmt.Errorf("%w: %s is required", ErrInvalidInput, pairs[i])
 		}
+	}
+	return nil
+}
+
+func (s *Service) verifyTargetAction(ctx context.Context, tenantID, episodeID string, t *Target) error {
+	if t == nil || s.actions == nil {
+		return nil
+	}
+	if t.Type != TargetAction && t.Type != TargetActionField {
+		return nil
+	}
+	ok, err := s.actions.ActionInEpisode(ctx, tenantID, episodeID, t.ActionID)
+	if err != nil {
+		return fmt.Errorf("verify action target %s: %w", t.ActionID, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: action %s not found in episode %s", ErrNotFound, t.ActionID, episodeID)
 	}
 	return nil
 }

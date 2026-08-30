@@ -47,6 +47,7 @@ type Feedback struct {
 	Reward         float64   `json:"reward"`
 	Confidence     float64   `json:"confidence"`
 	Evidence       string    `json:"evidence,omitempty"`
+	Target         *Target   `json:"target,omitempty"`
 	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
