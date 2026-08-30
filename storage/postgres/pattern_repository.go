@@ -25,11 +25,13 @@ func (r *PatternRepository) Create(ctx context.Context, p experience.Pattern) (e
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO patterns (
 			id, tenant_id, type, scope, scope_key, trigger_text, content,
-			confidence, utility, support_count, status, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			confidence, utility, alpha, beta, success_count, failure_count,
+			support_count, status, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 	`,
 		p.ID, p.TenantID, string(p.Type), string(p.Scope), p.ScopeKey, p.Trigger, p.Content,
-		p.Confidence, p.Utility, p.SupportCount, string(p.Status), p.CreatedAt, p.UpdatedAt,
+		p.Confidence, p.Utility, p.Alpha, p.Beta, p.SuccessCount, p.FailureCount,
+		p.SupportCount, string(p.Status), p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
 		return experience.Pattern{}, fmt.Errorf("insert pattern: %w", err)
@@ -41,11 +43,15 @@ func (r *PatternRepository) Update(ctx context.Context, p experience.Pattern) (e
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE patterns SET
 			type = $1, scope = $2, scope_key = $3, trigger_text = $4, content = $5,
-			confidence = $6, utility = $7, support_count = $8, status = $9, updated_at = $10
-		WHERE tenant_id = $11 AND id = $12
+			confidence = $6, utility = $7, alpha = $8, beta = $9,
+			success_count = $10, failure_count = $11, support_count = $12,
+			status = $13, updated_at = $14
+		WHERE tenant_id = $15 AND id = $16
 	`,
 		string(p.Type), string(p.Scope), p.ScopeKey, p.Trigger, p.Content,
-		p.Confidence, p.Utility, p.SupportCount, string(p.Status), p.UpdatedAt,
+		p.Confidence, p.Utility, p.Alpha, p.Beta,
+		p.SuccessCount, p.FailureCount, p.SupportCount,
+		string(p.Status), p.UpdatedAt,
 		p.TenantID, p.ID,
 	)
 	if err != nil {
@@ -64,7 +70,8 @@ func (r *PatternRepository) Update(ctx context.Context, p experience.Pattern) (e
 func (r *PatternRepository) Get(ctx context.Context, tenantID, id string) (experience.Pattern, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
-		       confidence, utility, support_count, status, created_at, updated_at
+		       confidence, utility, alpha, beta, success_count, failure_count,
+		       support_count, status, created_at, updated_at
 		FROM patterns
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id)
@@ -139,7 +146,8 @@ func (r *PatternRepository) FindByExperience(ctx context.Context, tenantID strin
 	}
 	q := fmt.Sprintf(`
 		SELECT DISTINCT p.id, p.tenant_id, p.type, p.scope, p.scope_key, p.trigger_text, p.content,
-		       p.confidence, p.utility, p.support_count, p.status, p.created_at, p.updated_at
+		       p.confidence, p.utility, p.alpha, p.beta, p.success_count, p.failure_count,
+		       p.support_count, p.status, p.created_at, p.updated_at
 		FROM patterns p
 		INNER JOIN pattern_evidence pe ON pe.pattern_id = p.id
 		WHERE p.tenant_id = $1 AND (%s)
@@ -176,7 +184,8 @@ func scanPattern(row patternScanner) (experience.Pattern, error) {
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(
 		&p.ID, &p.TenantID, &typ, &scope, &p.ScopeKey, &p.Trigger, &p.Content,
-		&p.Confidence, &p.Utility, &p.SupportCount, &status, &createdAt, &updatedAt,
+		&p.Confidence, &p.Utility, &p.Alpha, &p.Beta, &p.SuccessCount, &p.FailureCount,
+		&p.SupportCount, &status, &createdAt, &updatedAt,
 	); err != nil {
 		return experience.Pattern{}, err
 	}

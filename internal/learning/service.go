@@ -22,8 +22,9 @@ type Service struct {
 	events      EventRepository
 	applier     EventApplier
 	strategy    attribution.Strategy
-	links       LinkLister  // optional; experience→action edges for V2 attribution
-	actions     ActionLister // optional; tool_name enrichment for TOOL targets
+	links       LinkLister               // optional; experience→action edges for V2 attribution
+	actions     ActionLister             // optional; tool_name enrichment for TOOL targets
+	patterns    experience.PatternRepository // optional; V2-8 pattern utility propagation
 	now         func() time.Time
 	id          func() string
 }
@@ -83,6 +84,12 @@ func NewWithEvents(
 func (s *Service) WithActionGraph(links LinkLister, actions ActionLister) *Service {
 	s.links = links
 	s.actions = actions
+	return s
+}
+
+// WithPatterns attaches a pattern store so member-experience feedback updates Pattern utility (V2-8).
+func (s *Service) WithPatterns(repo experience.PatternRepository) *Service {
+	s.patterns = repo
 	return s
 }
 
@@ -289,10 +296,45 @@ func (s *Service) applyExistingEvent(
 			Beta:            result.Experience.Beta,
 			AlreadyApplied:  result.AlreadyApplied,
 		}
+		if !result.AlreadyApplied {
+			if err := s.propagatePatternLearning(ctx, tenantID, ev.ExperienceID, expReward, ev.Confidence); err != nil {
+				return UtilityUpdate{}, err
+			}
+		}
 		return u, nil
 	}
 	_ = s.events.MarkFailed(ctx, tenantID, ev.ID)
 	return UtilityUpdate{}, fmt.Errorf("apply learning event %s: %w", ev.ID, lastErr)
+}
+
+// propagatePatternLearning moves Pattern utility when a supporting experience learns (V2-8).
+func (s *Service) propagatePatternLearning(
+	ctx context.Context,
+	tenantID, experienceID string,
+	reward, confidence float64,
+) error {
+	if s.patterns == nil {
+		return nil
+	}
+	pats, err := s.patterns.FindByExperience(ctx, tenantID, []string{experienceID})
+	if err != nil {
+		return fmt.Errorf("find patterns for experience %s: %w", experienceID, err)
+	}
+	now := s.now()
+	for _, p := range pats {
+		if !p.Status.Retrievable() {
+			continue
+		}
+		updated, err := experience.ApplyPatternBetaUpdate(p, reward, confidence, now)
+		if err != nil {
+			return fmt.Errorf("beta update pattern %s: %w", p.ID, err)
+		}
+		updated = experience.MaybePromotePattern(updated)
+		if _, err := s.patterns.Update(ctx, updated); err != nil {
+			return fmt.Errorf("persist pattern %s utility: %w", p.ID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) createAndApplyEvent(

@@ -44,6 +44,10 @@ type Pattern struct {
 
 	Confidence   float64 `json:"confidence"`
 	Utility      float64 `json:"utility"`
+	Alpha        float64 `json:"alpha"`
+	Beta         float64 `json:"beta"`
+	SuccessCount int64   `json:"success_count"`
+	FailureCount int64   `json:"failure_count"`
 	SupportCount int     `json:"support_count"`
 
 	Status PatternStatus `json:"status"`

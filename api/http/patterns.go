@@ -11,6 +11,12 @@ type generalizeRequest struct {
 	ExperienceIDs []string `json:"experience_ids"`
 }
 
+type patternRewardRequest struct {
+	TenantID   string  `json:"tenant_id"`
+	Reward     float64 `json:"reward"`
+	Confidence float64 `json:"confidence"`
+}
+
 func (s *Server) handleGeneralize(w http.ResponseWriter, r *http.Request) {
 	if s.experiences == nil {
 		writeError(w, http.StatusServiceUnavailable, "experience service not configured")
@@ -70,4 +76,23 @@ func (s *Server) handleListPatternEvidence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"evidence": ev})
+}
+
+func (s *Server) handlePatternReward(w http.ResponseWriter, r *http.Request) {
+	if s.experiences == nil {
+		writeError(w, http.StatusServiceUnavailable, "experience service not configured")
+		return
+	}
+	var req patternRewardRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	id := r.PathValue("id")
+	p, err := s.experiences.ApplyPatternReward(r.Context(), req.TenantID, id, req.Reward, req.Confidence)
+	if err != nil {
+		s.writeExperienceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
 }

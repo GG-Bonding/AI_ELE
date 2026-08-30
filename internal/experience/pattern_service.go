@@ -94,6 +94,8 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 	}
 
 	now := s.now()
+	utility := clamp01(draft.Utility)
+	alpha, beta := SeedBetaFromUtility(utility)
 	pattern := Pattern{
 		ID:           s.id(),
 		TenantID:     strings.TrimSpace(tenantID),
@@ -103,7 +105,9 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 		Trigger:      strings.TrimSpace(draft.Trigger),
 		Content:      strings.TrimSpace(draft.Content),
 		Confidence:   clamp01(draft.Confidence),
-		Utility:      clamp01(draft.Utility),
+		Utility:      utility,
+		Alpha:        alpha,
+		Beta:         beta,
 		SupportCount: len(exps),
 		Status:       PatternStatusCandidate,
 		CreatedAt:    now,
@@ -141,6 +145,34 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 	}
 
 	return GeneralizeResult{Created: true, Pattern: created}, nil
+}
+
+// ApplyPatternReward applies a signed reward to a pattern's Beta utility (V2-8).
+// Used for direct pattern feedback; member-experience feedback also propagates via learning.
+func (s *Service) ApplyPatternReward(ctx context.Context, tenantID, patternID string, reward, confidence float64) (Pattern, error) {
+	if s.patterns == nil {
+		return Pattern{}, ErrNotFound
+	}
+	if err := requireNonEmpty("tenant_id", tenantID, "pattern_id", patternID); err != nil {
+		return Pattern{}, err
+	}
+	p, err := s.patterns.Get(ctx, tenantID, patternID)
+	if err != nil {
+		return Pattern{}, fmt.Errorf("get pattern %s: %w", patternID, err)
+	}
+	if !p.Status.Retrievable() {
+		return Pattern{}, fmt.Errorf("%w: pattern %s is not learnable (status=%s)", ErrInvalidInput, patternID, p.Status)
+	}
+	updated, err := ApplyPatternBetaUpdate(p, reward, confidence, s.now())
+	if err != nil {
+		return Pattern{}, err
+	}
+	updated = MaybePromotePattern(updated)
+	saved, err := s.patterns.Update(ctx, updated)
+	if err != nil {
+		return Pattern{}, fmt.Errorf("update pattern %s: %w", patternID, err)
+	}
+	return saved, nil
 }
 
 // GetPattern returns one pattern for a tenant.

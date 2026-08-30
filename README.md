@@ -15,6 +15,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 **V2-1 landed:** Action Tracking + ExperienceActionLink.
 **V2-2 landed:** Feedback Targeting (action / field / experience / tool).
 **V2-3 landed:** Attribution uses FeedbackTarget + ExperienceActionLink (not retrieval-score credit).
+**V2-8 landed:** Pattern Learning — Patterns carry Beta utility; feedback on member experiences updates Pattern utility (and can promote CANDIDATE → ACTIVE).
 **V2-7 landed:** Generalization — ≥3 independent episodes → Pattern + `DERIVED_FROM` (heuristic draft; gates on utility/conflict).
 **V2-6 landed:** Authority-based supersession — clear winners DEPRECATED losers; close calls keep CONFLICTS.
 **V2-5 landed:** Conflict detection — opposing experiences get `CONFLICTS` relations and are blocked from auto-context.

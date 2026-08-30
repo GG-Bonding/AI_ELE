@@ -65,11 +65,13 @@ Generalized rule derived from ≥3 experiences across ≥3 distinct episodes (sa
 | Field | Notes |
 | --- | --- |
 | Status | `CANDIDATE` / `ACTIVE` / `DEPRECATED` / `ARCHIVED` |
+| Utility | Beta posterior mean `α / (α + β)` — moves with feedback (V2-8) |
+| Alpha / Beta | Same learning rule as Experience |
 | SupportCount | Number of supporting experiences |
 | Evidence | `pattern_evidence` rows (pattern ↔ experience) |
 | Relation | `DERIVED_FROM` from pattern id → experience id |
 
-Patterns are not auto-injected into context yet (V2-8+ learning / retrieval).
+When a supporting experience receives feedback, Pattern utility updates with the same signed reward (idempotent with learning events). Strong enough practice promotes `CANDIDATE` → `ACTIVE`. Patterns are not yet auto-injected into context (retrieval later).
 
 ### Semantic Dedup (V2-4)
 

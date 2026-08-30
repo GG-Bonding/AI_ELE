@@ -78,7 +78,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init learning service: %w", err)
 	}
-	learnSvc = learnSvc.WithActionGraph(actionSvc, actionSvc)
+	learnSvc = learnSvc.WithActionGraph(actionSvc, actionSvc).WithPatterns(patternRepo)
 	feedbackSvc := feedback.NewServiceWithLearner(
 		postgres.NewFeedbackRepository(db),
 		episodeSvc,

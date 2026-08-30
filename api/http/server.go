@@ -55,6 +55,7 @@ type ExperienceService interface {
 	Generalize(ctx context.Context, tenantID string, in experience.GeneralizeInput) (experience.GeneralizeResult, error)
 	GetPattern(ctx context.Context, tenantID, patternID string) (experience.Pattern, error)
 	ListPatternEvidence(ctx context.Context, tenantID, patternID string) ([]experience.PatternEvidence, error)
+	ApplyPatternReward(ctx context.Context, tenantID, patternID string, reward, confidence float64) (experience.Pattern, error)
 }
 
 // ExperienceRetriever retrieves utility-ranked experiences for a task.
@@ -158,6 +159,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/patterns/generalize", s.handleGeneralize)
 	s.mux.HandleFunc("GET /api/v1/patterns/{id}", s.handleGetPattern)
 	s.mux.HandleFunc("GET /api/v1/patterns/{id}/evidence", s.handleListPatternEvidence)
+	s.mux.HandleFunc("POST /api/v1/patterns/{id}/reward", s.handlePatternReward)
 	s.mux.HandleFunc("POST /api/v1/context", s.handleBuildContext)
 
 	s.mux.HandleFunc("POST /api/v1/feedback", s.handleSubmitFeedback)
