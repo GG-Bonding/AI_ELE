@@ -98,4 +98,14 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2-9 Skill Candidate | ✅ landed |
 | V2-10 Sequential benchmark | ✅ landed |
 
+## V2.1 — Close the Intelligence Loop
+
+| Phase | Status |
+| --- | --- |
+| V2.1-1 ACTION_FIELD field attribution (`affected_fields`) | ✅ landed |
+| V2.1-2 Pattern into retrieval/context | ⬜ next |
+| V2.1-3 Pattern usage / suppress | ⬜ |
+| V2.1-4 PatternLearningEvent exactly-once | ⬜ |
+| V2.1-5 Automatic generalization | ⬜ |
+
 Full DoD and architecture: [docs/v2.md](v2.md).

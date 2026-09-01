@@ -20,10 +20,11 @@ type recordActionRequest struct {
 }
 
 type linkExperienceRequest struct {
-	TenantID     string   `json:"tenant_id"`
-	ExperienceID string   `json:"experience_id"`
-	Influence    *float64 `json:"influence"`
-	Evidence     string   `json:"evidence"`
+	TenantID       string   `json:"tenant_id"`
+	ExperienceID   string   `json:"experience_id"`
+	Influence      *float64 `json:"influence"`
+	AffectedFields []string `json:"affected_fields"`
+	Evidence       string   `json:"evidence"`
 }
 
 func (s *Server) handleRecordAction(w http.ResponseWriter, r *http.Request) {
@@ -84,12 +85,13 @@ func (s *Server) handleLinkExperienceToAction(w http.ResponseWriter, r *http.Req
 	}
 
 	link, err := s.actions.LinkExperience(r.Context(), action.LinkInput{
-		TenantID:     req.TenantID,
-		EpisodeID:    r.PathValue("id"),
-		ActionID:     r.PathValue("action_id"),
-		ExperienceID: req.ExperienceID,
-		Influence:    req.Influence,
-		Evidence:     req.Evidence,
+		TenantID:       req.TenantID,
+		EpisodeID:      r.PathValue("id"),
+		ActionID:       r.PathValue("action_id"),
+		ExperienceID:   req.ExperienceID,
+		Influence:      req.Influence,
+		AffectedFields: req.AffectedFields,
+		Evidence:       req.Evidence,
 	})
 	if err != nil {
 		s.writeActionError(w, r, err)

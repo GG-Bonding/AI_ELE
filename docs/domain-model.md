@@ -25,9 +25,13 @@ Concrete steps the agent took — attribution graph nodes (distinct from Attempt
 | `ANSWER` | Final/user-facing answer |
 | `WORKFLOW_STEP` | Multi-step workflow unit |
 
-## ExperienceActionLink (V2)
+## ExperienceActionLink (V2 / V2.1)
 
 `Experience → Action` influence edge (`influence ∈ [0,1]`, optional evidence). Foundation for V2 attribution (not retrieval-score credit sharing).
+
+| Field | Notes |
+| --- | --- |
+| `affected_fields` | JSON paths this experience influenced (e.g. `input.priority`). Required for `ACTION_FIELD` attribution; empty → no field-level credit |
 
 APIs: `POST/GET .../episodes/{id}/actions`, `POST .../actions/{action_id}/links`, `GET .../action-links`.
 
@@ -136,14 +140,15 @@ Freshness = exp(-λ × ageDays)   # λ by type; age from LastUsedAt (else Update
 Experience content is **untrusted**. Context Builder must label it as historical reference data, not instructions.
 
 
-## Attribution (V2)
+## Attribution (V2 / V2.1)
 
 When Feedback carries a Target:
 
 | Target | Credit rule |
 | --- | --- |
 | `EPISODE` / nil | V1 fallback: split by retrieval/final score among used experiences |
-| `ACTION` / `ACTION_FIELD` | Only experiences linked to that action (by `ExperienceActionLink.influence`) |
+| `ACTION` | Experiences linked to that action (by `ExperienceActionLink.influence`) |
+| `ACTION_FIELD` | Linked experiences whose `affected_fields` match the target field (path or last segment); empty `affected_fields` → fail closed |
 | `TOOL` | Only experiences linked to actions with that tool name |
 | `EXPERIENCE` | 100% credit to that experience if it was used |
 

@@ -43,25 +43,63 @@ func TestScoreProportionalSplitsByScore(t *testing.T) {
 	}
 }
 
-func TestTargetedActionFieldCreditsOnlyLinkedExperience(t *testing.T) {
+func TestTargetedActionFieldCreditsOnlyMatchingField(t *testing.T) {
 	t.Parallel()
 	credits, err := attribution.NewDefault().Attribute(attribution.Request{
 		Usages: []experience.Usage{
-			{ExperienceID: "e1", FinalScore: 10}, // high score, but not linked
-			{ExperienceID: "e2", FinalScore: 1},
-			{ExperienceID: "e3", FinalScore: 1},
+			{ExperienceID: "e1", FinalScore: 10}, // high score, wrong field
+			{ExperienceID: "e2", FinalScore: 1},  // matching field
+			{ExperienceID: "e3", FinalScore: 1},  // wrong field
 		},
-		Target: &attribution.TargetHint{Type: "ACTION_FIELD", ActionID: "a2", Field: "priority"},
+		Target: &attribution.TargetHint{Type: "ACTION_FIELD", ActionID: "a2", Field: "input.priority"},
 		Links: []attribution.LinkHint{
-			{ExperienceID: "e3", ActionID: "a2", Influence: 0.95},
-			{ExperienceID: "e1", ActionID: "a1", Influence: 1},
+			{ExperienceID: "e1", ActionID: "a2", Influence: 1, AffectedFields: []string{"input.project"}},
+			{ExperienceID: "e2", ActionID: "a2", Influence: 0.95, AffectedFields: []string{"input.priority"}},
+			{ExperienceID: "e3", ActionID: "a2", Influence: 1, AffectedFields: []string{"input.description"}},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(credits) != 1 || credits[0].ExperienceID != "e3" || credits[0].Weight != 1 {
-		t.Fatalf("want only e3@1, got %#v", credits)
+	if len(credits) != 1 || credits[0].ExperienceID != "e2" || credits[0].Weight != 1 {
+		t.Fatalf("want only e2@1, got %#v", credits)
+	}
+}
+
+func TestTargetedActionFieldEmptyAffectedFieldsFailsClosed(t *testing.T) {
+	t.Parallel()
+	credits, err := attribution.NewDefault().Attribute(attribution.Request{
+		Usages: []experience.Usage{{ExperienceID: "e3", FinalScore: 1}},
+		Target: &attribution.TargetHint{Type: "ACTION_FIELD", ActionID: "a2", Field: "priority"},
+		Links: []attribution.LinkHint{
+			{ExperienceID: "e3", ActionID: "a2", Influence: 0.95}, // no AffectedFields
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credits) != 0 {
+		t.Fatalf("want no credits without AffectedFields, got %#v", credits)
+	}
+}
+
+func TestTargetedActionStillCreditsWithoutAffectedFields(t *testing.T) {
+	t.Parallel()
+	credits, err := attribution.NewDefault().Attribute(attribution.Request{
+		Usages: []experience.Usage{
+			{ExperienceID: "e1", FinalScore: 10},
+			{ExperienceID: "e2", FinalScore: 1},
+		},
+		Target: &attribution.TargetHint{Type: "ACTION", ActionID: "a2"},
+		Links: []attribution.LinkHint{
+			{ExperienceID: "e2", ActionID: "a2", Influence: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credits) != 1 || credits[0].ExperienceID != "e2" {
+		t.Fatalf("want e2, got %#v", credits)
 	}
 }
 

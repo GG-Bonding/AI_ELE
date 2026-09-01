@@ -79,6 +79,9 @@ type ExperienceActionLink struct {
 	ExperienceID string  `json:"experience_id"`
 	ActionID     string  `json:"action_id"`
 	Influence    float64 `json:"influence"`
-	Evidence     string  `json:"evidence,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	// AffectedFields lists JSON paths this experience influenced (e.g. "input.priority").
+	// Used by ACTION_FIELD attribution (V2.1); empty means action-level influence only.
+	AffectedFields []string  `json:"affected_fields,omitempty"`
+	Evidence       string    `json:"evidence,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }

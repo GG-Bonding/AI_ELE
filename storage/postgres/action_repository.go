@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -95,13 +96,17 @@ func (r *ActionRepository) NextActionSequence(ctx context.Context, tenantID, epi
 }
 
 func (r *ActionRepository) CreateLink(ctx context.Context, link action.ExperienceActionLink) (action.ExperienceActionLink, error) {
-	_, err := r.db.ExecContext(ctx, `
+	fieldsJSON, err := marshalStringSlice(link.AffectedFields)
+	if err != nil {
+		return action.ExperienceActionLink{}, fmt.Errorf("marshal affected_fields: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO experience_action_links (
-			id, tenant_id, episode_id, experience_id, action_id, influence, evidence, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			id, tenant_id, episode_id, experience_id, action_id, influence, affected_fields, evidence, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 	`,
 		link.ID, link.TenantID, link.EpisodeID, link.ExperienceID, link.ActionID,
-		link.Influence, link.Evidence, link.CreatedAt,
+		link.Influence, fieldsJSON, link.Evidence, link.CreatedAt,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -115,7 +120,7 @@ func (r *ActionRepository) CreateLink(ctx context.Context, link action.Experienc
 
 func (r *ActionRepository) ListLinksByEpisode(ctx context.Context, tenantID, episodeID string) ([]action.ExperienceActionLink, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tenant_id, episode_id, experience_id, action_id, influence, evidence, created_at
+		SELECT id, tenant_id, episode_id, experience_id, action_id, influence, affected_fields, evidence, created_at
 		FROM experience_action_links
 		WHERE tenant_id = $1 AND episode_id = $2
 		ORDER BY created_at ASC, id ASC
@@ -129,7 +134,7 @@ func (r *ActionRepository) ListLinksByEpisode(ctx context.Context, tenantID, epi
 
 func (r *ActionRepository) ListLinksByAction(ctx context.Context, tenantID, actionID string) ([]action.ExperienceActionLink, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tenant_id, episode_id, experience_id, action_id, influence, evidence, created_at
+		SELECT id, tenant_id, episode_id, experience_id, action_id, influence, affected_fields, evidence, created_at
 		FROM experience_action_links
 		WHERE tenant_id = $1 AND action_id = $2
 		ORDER BY created_at ASC, id ASC
@@ -162,16 +167,43 @@ func scanLinks(rows *sql.Rows) ([]action.ExperienceActionLink, error) {
 	var out []action.ExperienceActionLink
 	for rows.Next() {
 		var link action.ExperienceActionLink
+		var fieldsJSON []byte
 		if err := rows.Scan(
 			&link.ID, &link.TenantID, &link.EpisodeID, &link.ExperienceID, &link.ActionID,
-			&link.Influence, &link.Evidence, &link.CreatedAt,
+			&link.Influence, &fieldsJSON, &link.Evidence, &link.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan experience action link: %w", err)
 		}
+		fields, err := unmarshalStringSlice(fieldsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal affected_fields: %w", err)
+		}
+		link.AffectedFields = fields
 		out = append(out, link)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate experience action links: %w", err)
+	}
+	return out, nil
+}
+
+func marshalStringSlice(vals []string) ([]byte, error) {
+	if vals == nil {
+		vals = []string{}
+	}
+	return json.Marshal(vals)
+}
+
+func unmarshalStringSlice(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
 	}
 	return out, nil
 }

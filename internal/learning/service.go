@@ -449,10 +449,11 @@ func (s *Service) loadAttributionLinks(ctx context.Context, tenantID, episodeID 
 	out := make([]attribution.LinkHint, 0, len(raw))
 	for _, link := range raw {
 		out = append(out, attribution.LinkHint{
-			ExperienceID: link.ExperienceID,
-			ActionID:     link.ActionID,
-			Influence:    link.Influence,
-			ToolName:     toolByAction[link.ActionID],
+			ExperienceID:   link.ExperienceID,
+			ActionID:       link.ActionID,
+			Influence:      link.Influence,
+			ToolName:       toolByAction[link.ActionID],
+			AffectedFields: link.AffectedFields,
 		})
 	}
 	return out, nil

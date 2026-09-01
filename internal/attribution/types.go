@@ -15,10 +15,11 @@ type TargetHint struct {
 
 // LinkHint is an experience→action influence edge for attribution.
 type LinkHint struct {
-	ExperienceID string
-	ActionID     string
-	Influence    float64
-	ToolName     string // optional; filled when action tool_name is known
+	ExperienceID   string
+	ActionID       string
+	Influence      float64
+	ToolName       string   // optional; filled when action tool_name is known
+	AffectedFields []string // optional JSON paths for ACTION_FIELD matching (V2.1)
 }
 
 // Request is the input to an attribution Strategy.

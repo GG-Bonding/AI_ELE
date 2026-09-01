@@ -44,12 +44,13 @@ type RecordInput struct {
 
 // LinkInput asserts that an experience influenced an action.
 type LinkInput struct {
-	TenantID     string
-	EpisodeID    string
-	ActionID     string
-	ExperienceID string
-	Influence    *float64 // optional; default 1.0
-	Evidence     string
+	TenantID       string
+	EpisodeID      string
+	ActionID       string
+	ExperienceID   string
+	Influence      *float64 // optional; default 1.0
+	AffectedFields []string // optional JSON paths for ACTION_FIELD attribution (V2.1)
+	Evidence       string
 }
 
 // RecordAction appends an action to an existing episode.
@@ -141,14 +142,15 @@ func (s *Service) LinkExperience(ctx context.Context, in LinkInput) (ExperienceA
 	}
 
 	link := ExperienceActionLink{
-		ID:           s.id(),
-		TenantID:     strings.TrimSpace(in.TenantID),
-		EpisodeID:    strings.TrimSpace(in.EpisodeID),
-		ExperienceID: strings.TrimSpace(in.ExperienceID),
-		ActionID:     strings.TrimSpace(in.ActionID),
-		Influence:    influence,
-		Evidence:     strings.TrimSpace(in.Evidence),
-		CreatedAt:    s.now(),
+		ID:             s.id(),
+		TenantID:       strings.TrimSpace(in.TenantID),
+		EpisodeID:      strings.TrimSpace(in.EpisodeID),
+		ExperienceID:   strings.TrimSpace(in.ExperienceID),
+		ActionID:       strings.TrimSpace(in.ActionID),
+		Influence:      influence,
+		AffectedFields: NormalizeAffectedFields(in.AffectedFields),
+		Evidence:       strings.TrimSpace(in.Evidence),
+		CreatedAt:      s.now(),
 	}
 
 	created, err := s.repo.CreateLink(ctx, link)
