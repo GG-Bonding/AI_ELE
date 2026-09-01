@@ -115,3 +115,85 @@ func TestBuildContextHardFiltersWrongToolScope(t *testing.T) {
 		t.Fatalf("missing untrusted disclaimer: %s", resp.Context.Disclaimer)
 	}
 }
+
+func TestBuildContextIncludesActivePatternsAndSuppressesEvidence(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := experience.NewMemoryRepository()
+	expSvc := experience.NewService(repo)
+	embedder := &provider.MockEmbedding{Dim: 32}
+	now := time.Now().UTC()
+
+	task := "modify jira project issue"
+	vecs, err := embedder.Embed(ctx, []string{task, "lookup project key first", "unique concrete fact PAY"})
+	if err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+	e1, err := repo.Create(ctx, experience.Experience{
+		ID: "e1", TenantID: "t", Type: experience.TypeProcedural,
+		Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "lookup project key first", Content: "lookup project key first before jira",
+		Confidence: 0.9, Utility: 0.9, Alpha: 1, Beta: 1,
+		Status: experience.StatusActive, Version: 1, Embedding: vecs[1],
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Create(ctx, experience.Experience{
+		ID: "e2", TenantID: "t", Type: experience.TypeSemantic,
+		Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "PAY key", Content: "PAY current project key is PAY",
+		Confidence: 0.9, Utility: 0.8, Alpha: 1, Beta: 1,
+		Status: experience.StatusActive, Version: 1, Embedding: vecs[2],
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	patterns := experience.NewMemoryPatternRepository()
+	p, err := patterns.Create(ctx, experience.Pattern{
+		ID: "p1", TenantID: "t", Type: experience.TypeProcedural,
+		Scope: experience.ScopeTool, ScopeKey: "jira",
+		Trigger: "jira project", Content: "confirm jira project key before acting",
+		Confidence: 0.9, Utility: 0.9, Status: experience.PatternStatusActive,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := patterns.AddEvidence(ctx, experience.PatternEvidence{
+		PatternID: p.ID, ExperienceID: e1.ID, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	retriever, err := retrieval.New(expSvc, embedder, retrieval.RankConfig{CandidateTopK: 10, DefaultTopK: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, err := retrieval.NewPatternRetriever(patterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := contextx.NewService(retriever, selector.New(selector.DefaultConfig()), contextx.New(contextx.DefaultConfig()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc = svc.WithPatterns(pr)
+
+	resp, err := svc.BuildContext(ctx, contextx.Request{
+		TenantID: "t", Task: task, Tools: []string{"jira"}, MaxExperiences: 5,
+	})
+	if err != nil {
+		t.Fatalf("BuildContext: %v", err)
+	}
+	if len(resp.Context.Patterns) != 1 || resp.Context.Patterns[0].ID != "p1" {
+		t.Fatalf("patterns=%#v", resp.Context.Patterns)
+	}
+	for _, item := range resp.Context.Experiences {
+		if item.Source == e1.ID {
+			t.Fatalf("evidence experience e1 should be suppressed when pattern is present: %#v", resp.Context.Experiences)
+		}
+	}
+}

@@ -106,3 +106,85 @@ func (m *MemoryPatternRepository) FindByExperience(_ context.Context, tenantID s
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
+
+func (m *MemoryPatternRepository) List(_ context.Context, filter PatternListFilter) ([]Pattern, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenantID := strings.TrimSpace(filter.TenantID)
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
+	statusOK := statusSet(filter.Statuses)
+	typeOK := typeSet(filter.Types)
+	scopeOK := scopeSet(filter.Scopes)
+	scopeKey := strings.TrimSpace(filter.ScopeKey)
+
+	out := make([]Pattern, 0)
+	for _, p := range m.byID {
+		if p.TenantID != tenantID {
+			continue
+		}
+		if len(statusOK) > 0 {
+			if _, ok := statusOK[p.Status]; !ok {
+				continue
+			}
+		}
+		if len(typeOK) > 0 {
+			if _, ok := typeOK[p.Type]; !ok {
+				continue
+			}
+		}
+		if len(scopeOK) > 0 {
+			if _, ok := scopeOK[p.Scope]; !ok {
+				continue
+			}
+		}
+		if scopeKey != "" && p.ScopeKey != scopeKey {
+			continue
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Utility == out[j].Utility {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Utility > out[j].Utility
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func statusSet(ss []PatternStatus) map[PatternStatus]struct{} {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make(map[PatternStatus]struct{}, len(ss))
+	for _, s := range ss {
+		out[s] = struct{}{}
+	}
+	return out
+}
+
+func typeSet(ts []Type) map[Type]struct{} {
+	if len(ts) == 0 {
+		return nil
+	}
+	out := make(map[Type]struct{}, len(ts))
+	for _, t := range ts {
+		out[t] = struct{}{}
+	}
+	return out
+}
+
+func scopeSet(ss []Scope) map[Scope]struct{} {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make(map[Scope]struct{}, len(ss))
+	for _, s := range ss {
+		out[s] = struct{}{}
+	}
+	return out
+}

@@ -25,7 +25,8 @@ func (s PatternStatus) Valid() bool {
 	}
 }
 
-// Retrievable reports whether the pattern may appear in default retrieval later (V2-8+).
+// Retrievable reports whether the pattern may enter default context retrieval (V2.1-2).
+// Context injection uses ACTIVE only; CANDIDATE remains listable for promotion paths.
 func (s PatternStatus) Retrievable() bool {
 	return s == PatternStatusActive || s == PatternStatusCandidate
 }
@@ -72,4 +73,16 @@ type PatternRepository interface {
 	ListEvidence(ctx context.Context, tenantID, patternID string) ([]PatternEvidence, error)
 	// FindByExperience returns patterns that already include any of the experience IDs.
 	FindByExperience(ctx context.Context, tenantID string, experienceIDs []string) ([]Pattern, error)
+	// List returns patterns matching filter (tenant required). Used by Pattern retrieval (V2.1-2).
+	List(ctx context.Context, filter PatternListFilter) ([]Pattern, error)
+}
+
+// PatternListFilter selects patterns for retrieval / evolution scans.
+type PatternListFilter struct {
+	TenantID string
+	Statuses []PatternStatus
+	Types    []Type
+	Scopes   []Scope
+	ScopeKey string
+	Limit    int
 }

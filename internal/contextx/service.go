@@ -15,6 +15,11 @@ type Retriever interface {
 	Retrieve(ctx context.Context, q retrieval.Query) ([]retrieval.RankedExperience, error)
 }
 
+// PatternSource retrieves generalized patterns for context (V2.1-2).
+type PatternSource interface {
+	RetrievePatterns(ctx context.Context, q retrieval.Query) ([]retrieval.RankedPattern, error)
+}
+
 // UsageRecorder records which experiences entered context for an episode.
 type UsageRecorder interface {
 	RecordUsages(ctx context.Context, in learning.RecordInput) error
@@ -28,6 +33,7 @@ type ConflictLookup interface {
 // Service orchestrates Retrieve → Select → Build for agent context.
 type Service struct {
 	retriever Retriever
+	patterns  PatternSource
 	selector  *selector.Selector
 	builder   *Builder
 	usages    UsageRecorder
@@ -59,6 +65,11 @@ func (s *Service) WithConflicts(lookup ConflictLookup) *Service {
 	return s
 }
 
+// WithPatterns attaches a pattern retriever so ACTIVE patterns enter context (V2.1-2).
+func (s *Service) WithPatterns(src PatternSource) *Service {
+	s.patterns = src
+	return s
+}
 
 // Request is a context build request.
 type Request struct {
@@ -69,6 +80,7 @@ type Request struct {
 	Task           string
 	Tools          []string
 	MaxExperiences int
+	MaxPatterns    int
 	MaxTokens      int
 	TopK           int
 }
@@ -97,16 +109,32 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 		}
 	}
 
-	ranked, err := s.retriever.Retrieve(ctx, retrieval.Query{
+	q := retrieval.Query{
 		TenantID: req.TenantID,
 		Task:     req.Task,
 		AgentID:  req.AgentID,
 		UserID:   req.UserID,
 		Tools:    req.Tools,
 		TopK:     topK,
-	})
+	}
+
+	ranked, err := s.retriever.Retrieve(ctx, q)
 	if err != nil {
 		return Response{}, fmt.Errorf("retrieve for context: %w", err)
+	}
+
+	var rankedPatterns []retrieval.RankedPattern
+	if s.patterns != nil {
+		patTopK := req.MaxPatterns
+		if patTopK <= 0 {
+			patTopK = s.builder.Config().MaxPatterns
+		}
+		pq := q
+		pq.TopK = patTopK
+		rankedPatterns, err = s.patterns.RetrievePatterns(ctx, pq)
+		if err != nil {
+			return Response{}, fmt.Errorf("retrieve patterns for context: %w", err)
+		}
 	}
 
 	conflictPeers := map[string]string(nil)
@@ -124,10 +152,13 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 	selected := s.selector.SelectWithOptions(req.Task, ranked, selector.SelectOptions{ConflictPeers: conflictPeers})
 
 	builder := s.builder
-	if req.MaxExperiences > 0 || req.MaxTokens > 0 {
+	if req.MaxExperiences > 0 || req.MaxTokens > 0 || req.MaxPatterns > 0 {
 		cfg := s.builder.Config()
 		if req.MaxExperiences > 0 {
 			cfg.MaxExperiences = req.MaxExperiences
+		}
+		if req.MaxPatterns > 0 {
+			cfg.MaxPatterns = req.MaxPatterns
 		}
 		if req.MaxTokens > 0 {
 			cfg.MaxTokens = req.MaxTokens
@@ -135,7 +166,7 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 		builder = New(cfg)
 	}
 
-	payload, err := builder.Build(selected)
+	payload, err := builder.BuildWithPatterns(selected, rankedPatterns)
 	if err != nil {
 		return Response{}, fmt.Errorf("build context: %w", err)
 	}

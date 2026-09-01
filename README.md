@@ -12,6 +12,8 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 **V2 DoD met** — Experience Intelligence (Attribution → Conflict → Generalization → Evolution) with sequential benchmark proof.
 
+**V2.1-2 landed:** ACTIVE Patterns enter `POST /api/v1/context` (`patterns` + `experiences`); evidence experiences suppressed by default.
+**V2.1-1 landed:** ACTION_FIELD attribution uses `affected_fields` provenance (priority feedback only hits priority experience).
 **V2-1 landed:** Action Tracking + ExperienceActionLink.
 **V2-2 landed:** Feedback Targeting (action / field / experience / tool).
 **V2-3 landed:** Attribution uses FeedbackTarget + ExperienceActionLink (not retrieval-score credit).

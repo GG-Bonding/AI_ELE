@@ -145,6 +145,11 @@ func run() error {
 			return fmt.Errorf("init context service: %w", err)
 		}
 		contextSvc = contextSvc.WithConflicts(experienceSvc)
+		if patternRetriever, err := retrieval.NewPatternRetriever(patternRepo); err != nil {
+			return fmt.Errorf("init pattern retriever: %w", err)
+		} else {
+			contextSvc = contextSvc.WithPatterns(patternRetriever)
+		}
 		opts.StorePipeline = pipeline
 		opts.Retriever = retriever
 		opts.Contexts = contextSvc

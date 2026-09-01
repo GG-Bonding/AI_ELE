@@ -75,7 +75,9 @@ Generalized rule derived from ≥3 experiences across ≥3 distinct episodes (sa
 | Evidence | `pattern_evidence` rows (pattern ↔ experience) |
 | Relation | `DERIVED_FROM` from pattern id → experience id |
 
-When a supporting experience receives feedback, Pattern utility updates with the same signed reward (idempotent with learning events). Strong enough practice promotes `CANDIDATE` → `ACTIVE`. Patterns are not yet auto-injected into context (retrieval later).
+When a supporting experience receives feedback, Pattern utility updates with the same signed reward (idempotent with learning events). Strong enough practice promotes `CANDIDATE` → `ACTIVE`.
+
+**V2.1-2:** `ACTIVE` Patterns enter agent context via `PatternRetriever` (lexical × utility × confidence × scope). Context payload has a `patterns` layer above `experiences`. Supporting evidence experiences are suppressed by default so generalization does not inflate tokens.
 
 ### Skill Candidate (V2-9)
 

@@ -174,6 +174,75 @@ func (r *PatternRepository) FindByExperience(ctx context.Context, tenantID strin
 	return out, nil
 }
 
+func (r *PatternRepository) List(ctx context.Context, filter experience.PatternListFilter) ([]experience.Pattern, error) {
+	tenantID := strings.TrimSpace(filter.TenantID)
+	if tenantID == "" {
+		return nil, experience.ErrInvalidInput
+	}
+	args := []any{tenantID}
+	where := []string{"tenant_id = $1"}
+
+	if len(filter.Statuses) > 0 {
+		preds := make([]string, 0, len(filter.Statuses))
+		for _, st := range filter.Statuses {
+			args = append(args, string(st))
+			preds = append(preds, fmt.Sprintf("$%d", len(args)))
+		}
+		where = append(where, "status IN ("+strings.Join(preds, ",")+ ")")
+	}
+	if len(filter.Types) > 0 {
+		preds := make([]string, 0, len(filter.Types))
+		for _, typ := range filter.Types {
+			args = append(args, string(typ))
+			preds = append(preds, fmt.Sprintf("$%d", len(args)))
+		}
+		where = append(where, "type IN ("+strings.Join(preds, ",")+ ")")
+	}
+	if len(filter.Scopes) > 0 {
+		preds := make([]string, 0, len(filter.Scopes))
+		for _, sc := range filter.Scopes {
+			args = append(args, string(sc))
+			preds = append(preds, fmt.Sprintf("$%d", len(args)))
+		}
+		where = append(where, "scope IN ("+strings.Join(preds, ",")+ ")")
+	}
+	if sk := strings.TrimSpace(filter.ScopeKey); sk != "" {
+		args = append(args, sk)
+		where = append(where, fmt.Sprintf("scope_key = $%d", len(args)))
+	}
+
+	q := `
+		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
+		       confidence, utility, alpha, beta, success_count, failure_count,
+		       support_count, status, created_at, updated_at
+		FROM patterns
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY utility DESC, id ASC`
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list patterns: %w", err)
+	}
+	defer rows.Close()
+
+	var out []experience.Pattern
+	for rows.Next() {
+		p, err := scanPattern(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan pattern: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate patterns: %w", err)
+	}
+	return out, nil
+}
+
 type patternScanner interface {
 	Scan(dest ...any) error
 }

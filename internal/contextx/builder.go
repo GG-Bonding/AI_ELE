@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 )
 
@@ -20,23 +21,39 @@ type Item struct {
 	Decision   string  `json:"decision,omitempty"`
 }
 
+// PatternItem is a generalized pattern entry (methodology layer).
+type PatternItem struct {
+	ID         string  `json:"id"`
+	Type       string  `json:"type"`
+	Content    string  `json:"content"`
+	Utility    float64 `json:"utility"`
+	Confidence float64 `json:"confidence"`
+	FinalScore float64 `json:"final_score,omitempty"`
+}
+
 // Payload is the context builder output.
 type Payload struct {
-	Disclaimer  string `json:"disclaimer"`
-	Experiences []Item `json:"experiences"`
+	Disclaimer  string        `json:"disclaimer"`
+	Patterns    []PatternItem `json:"patterns,omitempty"`
+	Experiences []Item        `json:"experiences"`
 }
 
 // Config limits how much experience enters the agent prompt.
 type Config struct {
 	MaxExperiences int
+	MaxPatterns    int
 	MaxTokens      int // approximate; 1 token ≈ 4 chars
+	// SuppressPatternEvidence drops concrete experiences covered by selected patterns (V2.1-2).
+	SuppressPatternEvidence bool
 }
 
-// DefaultConfig returns V1 defaults.
+// DefaultConfig returns V1 defaults with V2.1 pattern slot.
 func DefaultConfig() Config {
 	return Config{
-		MaxExperiences: 5,
-		MaxTokens:      800,
+		MaxExperiences:          5,
+		MaxPatterns:             3,
+		MaxTokens:               800,
+		SuppressPatternEvidence: true,
 	}
 }
 
@@ -49,6 +66,9 @@ type Builder struct {
 func New(cfg Config) *Builder {
 	if cfg.MaxExperiences <= 0 {
 		cfg.MaxExperiences = DefaultConfig().MaxExperiences
+	}
+	if cfg.MaxPatterns <= 0 {
+		cfg.MaxPatterns = DefaultConfig().MaxPatterns
 	}
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = DefaultConfig().MaxTokens
@@ -63,13 +83,60 @@ func (b *Builder) Config() Config {
 
 // Build keeps KEEP/COMPRESS decisions only, respecting max_experiences and max_tokens.
 func (b *Builder) Build(selected []selector.Result) (Payload, error) {
+	return b.BuildWithPatterns(selected, nil)
+}
+
+// BuildWithPatterns places generalized patterns above concrete experiences (V2.1-2).
+func (b *Builder) BuildWithPatterns(selected []selector.Result, patterns []retrieval.RankedPattern) (Payload, error) {
 	payload := Payload{
 		Disclaimer:  Disclaimer,
+		Patterns:    []PatternItem{},
 		Experiences: []Item{},
 	}
 
 	budgetChars := b.cfg.MaxTokens * 4
 	usedChars := utf8.RuneCountInString(Disclaimer)
+
+	suppress := map[string]struct{}{}
+	for i, rp := range patterns {
+		if i >= b.cfg.MaxPatterns {
+			break
+		}
+		content := strings.TrimSpace(rp.Pattern.Content)
+		if content == "" {
+			content = strings.TrimSpace(rp.Pattern.Trigger)
+		}
+		if content == "" {
+			continue
+		}
+		item := PatternItem{
+			ID:         rp.Pattern.ID,
+			Type:       string(rp.Pattern.Type),
+			Content:    content,
+			Utility:    rp.Pattern.Utility,
+			Confidence: rp.Pattern.Confidence,
+			FinalScore: rp.Score.FinalScore,
+		}
+		itemChars := utf8.RuneCountInString(item.ID) + utf8.RuneCountInString(item.Type) + utf8.RuneCountInString(item.Content)
+		if usedChars+itemChars > budgetChars && len(payload.Patterns) > 0 {
+			break
+		}
+		if usedChars+itemChars > budgetChars && len(payload.Patterns) == 0 && len(selected) == 0 {
+			remain := budgetChars - usedChars - 32
+			if remain < 20 {
+				return payload, fmt.Errorf("max_tokens too small to fit any pattern")
+			}
+			item.Content = trimRunes(item.Content, remain)
+			itemChars = utf8.RuneCountInString(item.ID) + utf8.RuneCountInString(item.Type) + utf8.RuneCountInString(item.Content)
+		}
+		payload.Patterns = append(payload.Patterns, item)
+		usedChars += itemChars
+		if b.cfg.SuppressPatternEvidence {
+			for _, id := range rp.EvidenceIDs {
+				suppress[id] = struct{}{}
+			}
+		}
+	}
 
 	for _, sel := range selected {
 		if sel.Decision != selector.DecisionKeep && sel.Decision != selector.DecisionCompress {
@@ -79,6 +146,10 @@ func (b *Builder) Build(selected []selector.Result) (Payload, error) {
 		if content == "" {
 			continue
 		}
+		expID := sel.Experience.Experience.ID
+		if _, skip := suppress[expID]; skip {
+			continue
+		}
 		if len(payload.Experiences) >= b.cfg.MaxExperiences {
 			break
 		}
@@ -86,7 +157,7 @@ func (b *Builder) Build(selected []selector.Result) (Payload, error) {
 		item := Item{
 			Type:       string(sel.Experience.Experience.Type),
 			Content:    content,
-			Source:     sel.Experience.Experience.ID,
+			Source:     expID,
 			Confidence: sel.Experience.Experience.Confidence,
 			Decision:   string(sel.Decision),
 		}
@@ -94,8 +165,7 @@ func (b *Builder) Build(selected []selector.Result) (Payload, error) {
 		if usedChars+itemChars > budgetChars && len(payload.Experiences) > 0 {
 			break
 		}
-		if usedChars+itemChars > budgetChars && len(payload.Experiences) == 0 {
-			// Always try to fit at least one truncated item.
+		if usedChars+itemChars > budgetChars && len(payload.Experiences) == 0 && len(payload.Patterns) == 0 {
 			remain := budgetChars - usedChars - 32
 			if remain < 20 {
 				return payload, fmt.Errorf("max_tokens too small to fit any experience")

@@ -14,6 +14,7 @@ type contextRequest struct {
 	Task           string   `json:"task"`
 	Tools          []string `json:"tools"`
 	MaxExperiences int      `json:"max_experiences"`
+	MaxPatterns    int      `json:"max_patterns"`
 	MaxTokens      int      `json:"max_tokens"`
 	TopK           int      `json:"top_k"`
 }
@@ -23,6 +24,15 @@ type contextExperienceResponse struct {
 	Content    string  `json:"content"`
 	Source     string  `json:"source"`
 	Confidence float64 `json:"confidence"`
+}
+
+type contextPatternResponse struct {
+	ID         string  `json:"id"`
+	Type       string  `json:"type"`
+	Content    string  `json:"content"`
+	Utility    float64 `json:"utility"`
+	Confidence float64 `json:"confidence"`
+	FinalScore float64 `json:"final_score,omitempty"`
 }
 
 type selectionResponse struct {
@@ -52,6 +62,7 @@ func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
 		Task:           req.Task,
 		Tools:          req.Tools,
 		MaxExperiences: req.MaxExperiences,
+		MaxPatterns:    req.MaxPatterns,
 		MaxTokens:      req.MaxTokens,
 		TopK:           req.TopK,
 	})
@@ -75,6 +86,18 @@ func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	patterns := make([]contextPatternResponse, 0, len(resp.Context.Patterns))
+	for _, item := range resp.Context.Patterns {
+		patterns = append(patterns, contextPatternResponse{
+			ID:         item.ID,
+			Type:       item.Type,
+			Content:    item.Content,
+			Utility:    item.Utility,
+			Confidence: item.Confidence,
+			FinalScore: item.FinalScore,
+		})
+	}
+
 	selections := make([]selectionResponse, 0, len(resp.Selections))
 	for _, sel := range resp.Selections {
 		selections = append(selections, selectionResponse{
@@ -87,6 +110,7 @@ func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"disclaimer":  resp.Context.Disclaimer,
+		"patterns":    patterns,
 		"experiences": experiences,
 		"selections":  selections,
 	})
