@@ -176,11 +176,27 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 		for _, item := range payload.Experiences {
 			ids = append(ids, item.Source)
 		}
+		patternRecords := make([]learning.PatternRecord, 0, len(payload.Patterns))
+		byID := map[string]retrieval.RankedPattern{}
+		for _, rp := range rankedPatterns {
+			byID[rp.Pattern.ID] = rp
+		}
+		for _, item := range payload.Patterns {
+			rec := learning.PatternRecord{PatternID: item.ID}
+			if rp, ok := byID[item.ID]; ok {
+				rec.RetrievalScore = rp.Score.Similarity
+				rec.FinalScore = rp.Score.FinalScore
+			} else {
+				rec.FinalScore = item.FinalScore
+			}
+			patternRecords = append(patternRecords, rec)
+		}
 		if err := s.usages.RecordUsages(ctx, learning.RecordInput{
 			TenantID:   req.TenantID,
 			EpisodeID:  req.EpisodeID,
 			Selections: selected,
 			ContextIDs: ids,
+			Patterns:   patternRecords,
 		}); err != nil {
 			return Response{}, fmt.Errorf("record experience usages for episode %s: %w", req.EpisodeID, err)
 		}
