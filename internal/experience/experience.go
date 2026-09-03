@@ -14,6 +14,8 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 	// ErrDuplicateDedup is returned when an experience with the same episode dedup key exists.
 	ErrDuplicateDedup = errors.New("experience dedup conflict")
+	// ErrDuplicateCluster is returned when a pattern with the same cluster fingerprint exists.
+	ErrDuplicateCluster = errors.New("pattern cluster fingerprint conflict")
 )
 
 // Status is the lifecycle state of a stored Experience.
@@ -121,6 +123,17 @@ type SearchFilter struct {
 	// QueryEmbedding is required for similarity search.
 	QueryEmbedding []float32
 	TopK           int
+}
+
+// ListFilter selects experiences for evolution / auto-generalization scans (V2.1-5).
+type ListFilter struct {
+	TenantID   string
+	Types      []Type
+	Scopes     []Scope
+	ScopeKey   string
+	Statuses   []Status // empty => ACTIVE only for evolution
+	MinUtility float64  // inclusive; 0 means no floor
+	Limit      int
 }
 
 // ScoredExperience is a retrieved experience with similarity score.

@@ -156,6 +156,21 @@ func (m *MemoryPatternRepository) List(_ context.Context, filter PatternListFilt
 	return out, nil
 }
 
+func (m *MemoryPatternRepository) GetByFingerprint(_ context.Context, tenantID, fingerprint string) (Pattern, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fp := strings.TrimSpace(fingerprint)
+	if fp == "" {
+		return Pattern{}, ErrNotFound
+	}
+	for _, p := range m.byID {
+		if p.TenantID == tenantID && p.ClusterFingerprint == fp {
+			return p, nil
+		}
+	}
+	return Pattern{}, ErrNotFound
+}
+
 func statusSet(ss []PatternStatus) map[PatternStatus]struct{} {
 	if len(ss) == 0 {
 		return nil

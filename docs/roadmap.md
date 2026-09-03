@@ -106,6 +106,6 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2.1-2 Pattern into retrieval/context | ✅ landed |
 | V2.1-3 Pattern usage / suppress | ✅ landed |
 | V2.1-4 PatternLearningEvent exactly-once | ✅ landed |
-| V2.1-5 Automatic generalization | ⬜ next |
+| V2.1-5 Automatic generalization | ✅ landed |
 
 Full DoD and architecture: [docs/v2.md](v2.md).

@@ -2,6 +2,7 @@ package experience
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -84,6 +85,15 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 		}
 	}
 
+	fp := ClusterFingerprint(ids)
+	if fp != "" {
+		if existingFP, err := s.patterns.GetByFingerprint(ctx, tenantID, fp); err == nil {
+			return GeneralizeResult{Created: false, Pattern: existingFP, Skipped: "cluster fingerprint already exists"}, nil
+		} else if !errors.Is(err, ErrNotFound) {
+			return GeneralizeResult{}, fmt.Errorf("lookup cluster fingerprint: %w", err)
+		}
+	}
+
 	gen := s.generalizer
 	if gen == nil {
 		gen = HeuristicPatternGeneralizer{}
@@ -97,21 +107,22 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 	utility := clamp01(draft.Utility)
 	alpha, beta := SeedBetaFromUtility(utility)
 	pattern := Pattern{
-		ID:           s.id(),
-		TenantID:     strings.TrimSpace(tenantID),
-		Type:         draft.Type,
-		Scope:        draft.Scope,
-		ScopeKey:     draft.ScopeKey,
-		Trigger:      strings.TrimSpace(draft.Trigger),
-		Content:      strings.TrimSpace(draft.Content),
-		Confidence:   clamp01(draft.Confidence),
-		Utility:      utility,
-		Alpha:        alpha,
-		Beta:         beta,
-		SupportCount: len(exps),
-		Status:       PatternStatusCandidate,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:                 s.id(),
+		TenantID:           strings.TrimSpace(tenantID),
+		Type:               draft.Type,
+		Scope:              draft.Scope,
+		ScopeKey:           draft.ScopeKey,
+		Trigger:            strings.TrimSpace(draft.Trigger),
+		Content:            strings.TrimSpace(draft.Content),
+		Confidence:         clamp01(draft.Confidence),
+		Utility:            utility,
+		Alpha:              alpha,
+		Beta:               beta,
+		SupportCount:       len(exps),
+		ClusterFingerprint: fp,
+		Status:             PatternStatusCandidate,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if pattern.Trigger == "" || pattern.Content == "" {
 		return GeneralizeResult{}, fmt.Errorf("%w: generalized trigger/content required", ErrInvalidInput)
@@ -119,6 +130,12 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 
 	created, err := s.patterns.Create(ctx, pattern)
 	if err != nil {
+		if errors.Is(err, ErrDuplicateCluster) {
+			existingFP, getErr := s.patterns.GetByFingerprint(ctx, tenantID, fp)
+			if getErr == nil {
+				return GeneralizeResult{Created: false, Pattern: existingFP, Skipped: "cluster fingerprint already exists"}, nil
+			}
+		}
 		return GeneralizeResult{}, fmt.Errorf("create pattern: %w", err)
 	}
 

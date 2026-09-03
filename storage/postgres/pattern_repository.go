@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PatternRepository persists patterns in PostgreSQL.
@@ -26,14 +27,18 @@ func (r *PatternRepository) Create(ctx context.Context, p experience.Pattern) (e
 		INSERT INTO patterns (
 			id, tenant_id, type, scope, scope_key, trigger_text, content,
 			confidence, utility, alpha, beta, success_count, failure_count,
-			support_count, status, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			support_count, status, cluster_fingerprint, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 	`,
 		p.ID, p.TenantID, string(p.Type), string(p.Scope), p.ScopeKey, p.Trigger, p.Content,
 		p.Confidence, p.Utility, p.Alpha, p.Beta, p.SuccessCount, p.FailureCount,
-		p.SupportCount, string(p.Status), p.CreatedAt, p.UpdatedAt,
+		p.SupportCount, string(p.Status), p.ClusterFingerprint, p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return experience.Pattern{}, experience.ErrDuplicateCluster
+		}
 		return experience.Pattern{}, fmt.Errorf("insert pattern: %w", err)
 	}
 	return p, nil
@@ -45,13 +50,13 @@ func (r *PatternRepository) Update(ctx context.Context, p experience.Pattern) (e
 			type = $1, scope = $2, scope_key = $3, trigger_text = $4, content = $5,
 			confidence = $6, utility = $7, alpha = $8, beta = $9,
 			success_count = $10, failure_count = $11, support_count = $12,
-			status = $13, updated_at = $14
-		WHERE tenant_id = $15 AND id = $16
+			status = $13, cluster_fingerprint = $14, updated_at = $15
+		WHERE tenant_id = $16 AND id = $17
 	`,
 		string(p.Type), string(p.Scope), p.ScopeKey, p.Trigger, p.Content,
 		p.Confidence, p.Utility, p.Alpha, p.Beta,
 		p.SuccessCount, p.FailureCount, p.SupportCount,
-		string(p.Status), p.UpdatedAt,
+		string(p.Status), p.ClusterFingerprint, p.UpdatedAt,
 		p.TenantID, p.ID,
 	)
 	if err != nil {
@@ -71,7 +76,7 @@ func (r *PatternRepository) Get(ctx context.Context, tenantID, id string) (exper
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
 		       confidence, utility, alpha, beta, success_count, failure_count,
-		       support_count, status, created_at, updated_at
+		       support_count, status, cluster_fingerprint, created_at, updated_at
 		FROM patterns
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id)
@@ -81,6 +86,28 @@ func (r *PatternRepository) Get(ctx context.Context, tenantID, id string) (exper
 			return experience.Pattern{}, experience.ErrNotFound
 		}
 		return experience.Pattern{}, fmt.Errorf("get pattern: %w", err)
+	}
+	return p, nil
+}
+
+func (r *PatternRepository) GetByFingerprint(ctx context.Context, tenantID, fingerprint string) (experience.Pattern, error) {
+	fp := strings.TrimSpace(fingerprint)
+	if fp == "" {
+		return experience.Pattern{}, experience.ErrNotFound
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
+		       confidence, utility, alpha, beta, success_count, failure_count,
+		       support_count, status, cluster_fingerprint, created_at, updated_at
+		FROM patterns
+		WHERE tenant_id = $1 AND cluster_fingerprint = $2
+	`, tenantID, fp)
+	p, err := scanPattern(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return experience.Pattern{}, experience.ErrNotFound
+		}
+		return experience.Pattern{}, fmt.Errorf("get pattern by fingerprint: %w", err)
 	}
 	return p, nil
 }
@@ -147,7 +174,7 @@ func (r *PatternRepository) FindByExperience(ctx context.Context, tenantID strin
 	q := fmt.Sprintf(`
 		SELECT DISTINCT p.id, p.tenant_id, p.type, p.scope, p.scope_key, p.trigger_text, p.content,
 		       p.confidence, p.utility, p.alpha, p.beta, p.success_count, p.failure_count,
-		       p.support_count, p.status, p.created_at, p.updated_at
+		       p.support_count, p.status, p.cluster_fingerprint, p.created_at, p.updated_at
 		FROM patterns p
 		INNER JOIN pattern_evidence pe ON pe.pattern_id = p.id
 		WHERE p.tenant_id = $1 AND (%s)
@@ -214,7 +241,7 @@ func (r *PatternRepository) List(ctx context.Context, filter experience.PatternL
 	q := `
 		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
 		       confidence, utility, alpha, beta, success_count, failure_count,
-		       support_count, status, created_at, updated_at
+		       support_count, status, cluster_fingerprint, created_at, updated_at
 		FROM patterns
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY utility DESC, id ASC`
@@ -254,7 +281,7 @@ func scanPattern(row patternScanner) (experience.Pattern, error) {
 	if err := row.Scan(
 		&p.ID, &p.TenantID, &typ, &scope, &p.ScopeKey, &p.Trigger, &p.Content,
 		&p.Confidence, &p.Utility, &p.Alpha, &p.Beta, &p.SuccessCount, &p.FailureCount,
-		&p.SupportCount, &status, &createdAt, &updatedAt,
+		&p.SupportCount, &status, &p.ClusterFingerprint, &createdAt, &updatedAt,
 	); err != nil {
 		return experience.Pattern{}, err
 	}

@@ -51,6 +51,9 @@ type Pattern struct {
 	FailureCount int64   `json:"failure_count"`
 	SupportCount int     `json:"support_count"`
 
+	// ClusterFingerprint is SHA-256 of sorted supporting experience IDs (V2.1-5 dedupe).
+	ClusterFingerprint string `json:"cluster_fingerprint,omitempty"`
+
 	Status PatternStatus `json:"status"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -75,6 +78,8 @@ type PatternRepository interface {
 	FindByExperience(ctx context.Context, tenantID string, experienceIDs []string) ([]Pattern, error)
 	// List returns patterns matching filter (tenant required). Used by Pattern retrieval (V2.1-2).
 	List(ctx context.Context, filter PatternListFilter) ([]Pattern, error)
+	// GetByFingerprint returns a pattern with the given cluster fingerprint (V2.1-5).
+	GetByFingerprint(ctx context.Context, tenantID, fingerprint string) (Pattern, error)
 }
 
 // PatternListFilter selects patterns for retrieval / evolution scans.

@@ -2,7 +2,6 @@ package experience
 
 import (
 	"context"
-	"math"
 	"sort"
 	"sync"
 )
@@ -114,7 +113,7 @@ func (m *MemoryRepository) Search(_ context.Context, filter SearchFilter) ([]Sco
 		if filter.ScopeKey != "" && exp.ScopeKey != filter.ScopeKey {
 			continue
 		}
-		sim := cosineSimilarity(filter.QueryEmbedding, exp.Embedding)
+		sim := CosineSimilarity(filter.QueryEmbedding, exp.Embedding)
 		scored = append(scored, ScoredExperience{Experience: cloneExperience(exp), Similarity: sim})
 	}
 
@@ -135,6 +134,53 @@ func (m *MemoryRepository) Search(_ context.Context, filter SearchFilter) ([]Sco
 		scored = scored[:filter.TopK]
 	}
 	return scored, nil
+}
+
+func (m *MemoryRepository) List(_ context.Context, filter ListFilter) ([]Experience, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	statuses := filter.Statuses
+	if len(statuses) == 0 {
+		statuses = []Status{StatusActive}
+	}
+	statusSet := map[Status]struct{}{}
+	for _, s := range statuses {
+		statusSet[s] = struct{}{}
+	}
+
+	out := make([]Experience, 0)
+	for _, exp := range m.data {
+		if exp.TenantID != filter.TenantID {
+			continue
+		}
+		if _, ok := statusSet[exp.Status]; !ok {
+			continue
+		}
+		if len(filter.Types) > 0 && !containsType(filter.Types, exp.Type) {
+			continue
+		}
+		if len(filter.Scopes) > 0 && !containsScope(filter.Scopes, exp.Scope) {
+			continue
+		}
+		if filter.ScopeKey != "" && exp.ScopeKey != filter.ScopeKey {
+			continue
+		}
+		if filter.MinUtility > 0 && exp.Utility < filter.MinUtility {
+			continue
+		}
+		out = append(out, cloneExperience(exp))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Utility == out[j].Utility {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Utility > out[j].Utility
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 func (m *MemoryRepository) Supersede(_ context.Context, tenantID, oldID, newID string) error {
@@ -187,26 +233,6 @@ func containsScope(list []Scope, v Scope) bool {
 		}
 	}
 	return false
-}
-
-func cosineSimilarity(a, b []float32) float64 {
-	n := len(a)
-	if len(b) < n {
-		n = len(b)
-	}
-	if n == 0 {
-		return 0
-	}
-	var dot, na, nb float64
-	for i := 0; i < n; i++ {
-		dot += float64(a[i]) * float64(b[i])
-		na += float64(a[i]) * float64(a[i])
-		nb += float64(b[i]) * float64(b[i])
-	}
-	if na == 0 || nb == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 func cloneExperience(exp Experience) Experience {

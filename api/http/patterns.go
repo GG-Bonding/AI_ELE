@@ -11,6 +11,13 @@ type generalizeRequest struct {
 	ExperienceIDs []string `json:"experience_ids"`
 }
 
+type autoGeneralizeRequest struct {
+	TenantID      string  `json:"tenant_id"`
+	MinUtility    float64 `json:"min_utility"`
+	MinSimilarity float64 `json:"min_similarity"`
+	MaxCandidates int     `json:"max_candidates"`
+}
+
 type patternRewardRequest struct {
 	TenantID       string  `json:"tenant_id"`
 	Reward         float64 `json:"reward"`
@@ -47,6 +54,32 @@ func (s *Server) handleGeneralize(w http.ResponseWriter, r *http.Request) {
 		body["pattern"] = res.Pattern
 	}
 	writeJSON(w, status, body)
+}
+
+func (s *Server) handleAutoGeneralize(w http.ResponseWriter, r *http.Request) {
+	if s.experiences == nil {
+		writeError(w, http.StatusServiceUnavailable, "experience service not configured")
+		return
+	}
+	var req autoGeneralizeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	res, err := s.experiences.AutoGeneralize(r.Context(), req.TenantID, experience.AutoGeneralizeOptions{
+		MinUtility:    req.MinUtility,
+		MinSimilarity: req.MinSimilarity,
+		MaxCandidates: req.MaxCandidates,
+	})
+	if err != nil {
+		s.writeExperienceError(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if len(res.Created) > 0 {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, res)
 }
 
 func (s *Server) handleGetPattern(w http.ResponseWriter, r *http.Request) {

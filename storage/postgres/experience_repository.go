@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
@@ -127,6 +128,106 @@ func (r *ExperienceRepository) Get(ctx context.Context, tenantID, id string) (ex
 		return experience.Experience{}, fmt.Errorf("get experience: %w", err)
 	}
 	return exp, nil
+}
+
+func (r *ExperienceRepository) List(ctx context.Context, filter experience.ListFilter) ([]experience.Experience, error) {
+	if strings.TrimSpace(filter.TenantID) == "" {
+		return nil, experience.ErrInvalidInput
+	}
+	args := []any{filter.TenantID}
+	var where []string
+	where = append(where, "tenant_id = $1")
+
+	statuses := filter.Statuses
+	if len(statuses) == 0 {
+		statuses = []experience.Status{experience.StatusActive}
+	}
+	statusPlaceholders := make([]string, len(statuses))
+	for i, s := range statuses {
+		args = append(args, string(s))
+		statusPlaceholders[i] = fmt.Sprintf("$%d", len(args))
+	}
+	where = append(where, "status IN ("+strings.Join(statusPlaceholders, ",")+")")
+
+	if len(filter.Types) > 0 {
+		preds := make([]string, 0, len(filter.Types))
+		for _, t := range filter.Types {
+			args = append(args, string(t))
+			preds = append(preds, fmt.Sprintf("$%d", len(args)))
+		}
+		where = append(where, "type IN ("+strings.Join(preds, ",")+")")
+	}
+	if len(filter.Scopes) > 0 {
+		preds := make([]string, 0, len(filter.Scopes))
+		for _, s := range filter.Scopes {
+			args = append(args, string(s))
+			preds = append(preds, fmt.Sprintf("$%d", len(args)))
+		}
+		where = append(where, "scope IN ("+strings.Join(preds, ",")+")")
+	}
+	if filter.ScopeKey != "" {
+		args = append(args, filter.ScopeKey)
+		where = append(where, fmt.Sprintf("scope_key = $%d", len(args)))
+	}
+	if filter.MinUtility > 0 {
+		args = append(args, filter.MinUtility)
+		where = append(where, fmt.Sprintf("utility >= $%d", len(args)))
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	args = append(args, limit)
+	limitPh := fmt.Sprintf("$%d", len(args))
+
+	q := fmt.Sprintf(`
+		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content, source_episode_id,
+		       confidence, utility, alpha, beta, success_count, failure_count, use_count,
+		       status, version, supersedes_id, created_at, updated_at, last_used_at, evidence,
+		       embedding::text
+		FROM experiences
+		WHERE %s
+		ORDER BY utility DESC, id ASC
+		LIMIT %s
+	`, strings.Join(where, " AND "), limitPh)
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list experiences: %w", err)
+	}
+	defer rows.Close()
+
+	var out []experience.Experience
+	for rows.Next() {
+		var exp experience.Experience
+		var typ, scope, status string
+		var evidenceJSON []byte
+		var embText string
+		if err := rows.Scan(
+			&exp.ID, &exp.TenantID, &typ, &scope, &exp.ScopeKey, &exp.Trigger, &exp.Content, &exp.SourceEpisodeID,
+			&exp.Confidence, &exp.Utility, &exp.Alpha, &exp.Beta, &exp.SuccessCount, &exp.FailureCount, &exp.UseCount,
+			&status, &exp.Version, &exp.SupersedesID, &exp.CreatedAt, &exp.UpdatedAt, &exp.LastUsedAt, &evidenceJSON,
+			&embText,
+		); err != nil {
+			return nil, fmt.Errorf("scan list row: %w", err)
+		}
+		exp.Type = experience.Type(typ)
+		exp.Scope = experience.Scope(scope)
+		exp.Status = experience.Status(status)
+		if len(evidenceJSON) > 0 && string(evidenceJSON) != "null" {
+			if err := json.Unmarshal(evidenceJSON, &exp.Evidence); err != nil {
+				return nil, fmt.Errorf("decode evidence: %w", err)
+			}
+		}
+		emb, err := parseVector(embText)
+		if err != nil {
+			return nil, fmt.Errorf("parse embedding for %s: %w", exp.ID, err)
+		}
+		exp.Embedding = emb
+		out = append(out, exp)
+	}
+	return out, rows.Err()
 }
 
 func (r *ExperienceRepository) Search(ctx context.Context, filter experience.SearchFilter) ([]experience.ScoredExperience, error) {
@@ -343,4 +444,30 @@ func formatVector(v []float32) (string, error) {
 	}
 	b.WriteByte(']')
 	return b.String(), nil
+}
+
+func parseVector(s string) ([]float32, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("empty vector text")
+	}
+	s = strings.TrimPrefix(s, "[")
+	s = strings.TrimSuffix(s, "]")
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]float32, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		f, err := strconv.ParseFloat(p, 32)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, float32(f))
+	}
+	return out, nil
 }
