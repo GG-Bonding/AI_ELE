@@ -127,7 +127,19 @@ Links Episode ↔ Experience with retrieval/selection scores — foundation for 
 
 Links Episode ↔ Pattern when an ACTIVE Pattern enters context (`retrieval_score`, `final_score`, `used_at`).
 
-Episode-level feedback can credit Patterns directly from this ledger (score-proportional). Patterns already credited this way skip member-experience propagation for that feedback, avoiding double pay. `pattern_reward_claims` provides insert-if-absent idempotency until PatternLearningEvent (V2.1-4).
+Episode-level feedback credits Patterns via **PatternLearningEvent** (`PATTERN_USAGE` source). Patterns already credited this way skip member-experience propagation for that feedback.
+
+## PatternLearningEvent (V2.1-4)
+
+Exactly-once ledger for Pattern utility updates (mirrors Experience `learning_events`).
+
+| Source | Unique key | Meaning |
+| --- | --- | --- |
+| `MEMBER_EXPERIENCE` | `(source_learning_event_id, pattern_id)` | Derived after an experience LearningEvent applies |
+| `PATTERN_USAGE` | `(feedback_id, pattern_id, source)` | Episode feedback on Patterns that entered context |
+| `DIRECT` | `(feedback_id, pattern_id, source)` | `POST /patterns/{id}/reward` with `idempotency_key` |
+
+Status: `PENDING` → `APPLIED` / `FAILED`. Replay / crash recovery re-derives missing events and retries PENDING/FAILED without double Beta updates.
 
 ## Learning Math (V1)
 

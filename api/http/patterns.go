@@ -12,9 +12,10 @@ type generalizeRequest struct {
 }
 
 type patternRewardRequest struct {
-	TenantID   string  `json:"tenant_id"`
-	Reward     float64 `json:"reward"`
-	Confidence float64 `json:"confidence"`
+	TenantID       string  `json:"tenant_id"`
+	Reward         float64 `json:"reward"`
+	Confidence     float64 `json:"confidence"`
+	IdempotencyKey string  `json:"idempotency_key"`
 }
 
 func (s *Server) handleGeneralize(w http.ResponseWriter, r *http.Request) {
@@ -79,16 +80,25 @@ func (s *Server) handleListPatternEvidence(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handlePatternReward(w http.ResponseWriter, r *http.Request) {
-	if s.experiences == nil {
-		writeError(w, http.StatusServiceUnavailable, "experience service not configured")
-		return
-	}
 	var req patternRewardRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	id := r.PathValue("id")
+	if s.patternRewards != nil {
+		p, err := s.patternRewards.ApplyDirectPatternReward(r.Context(), req.TenantID, id, req.IdempotencyKey, req.Reward, req.Confidence)
+		if err != nil {
+			s.writeExperienceError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+		return
+	}
+	if s.experiences == nil {
+		writeError(w, http.StatusServiceUnavailable, "experience service not configured")
+		return
+	}
 	p, err := s.experiences.ApplyPatternReward(r.Context(), req.TenantID, id, req.Reward, req.Confidence)
 	if err != nil {
 		s.writeExperienceError(w, r, err)

@@ -12,6 +12,7 @@ Not chat Memory. Not generic RAG. Not an Agent framework.
 
 **V2 DoD met** — Experience Intelligence (Attribution → Conflict → Generalization → Evolution) with sequential benchmark proof.
 
+**V2.1-4 landed:** PatternLearningEvent exactly-once ledger (member / usage / direct sources).
 **V2.1-3 landed:** PatternUsage ledger — patterns in context are recorded; episode feedback can credit Patterns directly.
 **V2.1-2 landed:** ACTIVE Patterns enter `POST /api/v1/context` (`patterns` + `experiences`); evidence experiences suppressed by default.
 **V2.1-1 landed:** ACTION_FIELD attribution uses `affected_fields` provenance (priority feedback only hits priority experience).

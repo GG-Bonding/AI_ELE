@@ -61,6 +61,11 @@ type ExperienceService interface {
 	GetSkillByPattern(ctx context.Context, tenantID, patternID string) (experience.SkillCandidate, error)
 }
 
+// PatternRewardService applies exactly-once direct Pattern rewards (V2.1-4).
+type PatternRewardService interface {
+	ApplyDirectPatternReward(ctx context.Context, tenantID, patternID, idempotencyKey string, reward, confidence float64) (experience.Pattern, error)
+}
+
 // ExperienceRetriever retrieves utility-ranked experiences for a task.
 type ExperienceRetriever interface {
 	Retrieve(ctx context.Context, q retrieval.Query) ([]retrieval.RankedExperience, error)
@@ -108,39 +113,42 @@ type Server struct {
 	storePipeline ExperienceStorePipeline
 	learning      EpisodeLearningProcessor
 	contexts      ContextService
-	feedbacks     FeedbackService
-	actions       ActionService
-	mux           *http.ServeMux
+	feedbacks      FeedbackService
+	actions        ActionService
+	patternRewards PatternRewardService
+	mux            *http.ServeMux
 }
 
 // Options configures optional server dependencies.
 type Options struct {
-	Episodes      EpisodeService
-	Extractor     ExperienceExtractor
-	Experiences   ExperienceService
-	Retriever     ExperienceRetriever
-	StorePipeline ExperienceStorePipeline
-	Learning      EpisodeLearningProcessor
-	Contexts      ContextService
-	Feedbacks     FeedbackService
-	Actions       ActionService
+	Episodes       EpisodeService
+	Extractor      ExperienceExtractor
+	Experiences    ExperienceService
+	Retriever      ExperienceRetriever
+	StorePipeline  ExperienceStorePipeline
+	Learning       EpisodeLearningProcessor
+	Contexts       ContextService
+	Feedbacks      FeedbackService
+	Actions        ActionService
+	PatternRewards PatternRewardService
 }
 
 // New constructs an HTTP server with health and episode endpoints.
 func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 	s := &Server{
-		logger:        logger,
-		ready:         ready,
-		episodes:      opts.Episodes,
-		extractor:     opts.Extractor,
-		experiences:   opts.Experiences,
-		retriever:     opts.Retriever,
-		storePipeline: opts.StorePipeline,
-		learning:      opts.Learning,
-		contexts:      opts.Contexts,
-		feedbacks:     opts.Feedbacks,
-		actions:       opts.Actions,
-		mux:           http.NewServeMux(),
+		logger:         logger,
+		ready:          ready,
+		episodes:       opts.Episodes,
+		extractor:      opts.Extractor,
+		experiences:    opts.Experiences,
+		retriever:      opts.Retriever,
+		storePipeline:  opts.StorePipeline,
+		learning:       opts.Learning,
+		contexts:       opts.Contexts,
+		feedbacks:      opts.Feedbacks,
+		actions:        opts.Actions,
+		patternRewards: opts.PatternRewards,
+		mux:            http.NewServeMux(),
 	}
 	s.routes()
 	return s

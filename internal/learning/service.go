@@ -17,18 +17,19 @@ import (
 
 // Service records experience usage and applies incremental feedback learning events.
 type Service struct {
-	usages        experience.UsageRepository
-	patternUsages experience.PatternUsageRepository       // optional; V2.1-3
-	patternClaims experience.PatternRewardClaimRepository // optional; V2.1-3 idempotency
-	experiences   experience.Repository
-	events        EventRepository
-	applier       EventApplier
-	strategy      attribution.Strategy
-	links         LinkLister                   // optional; experience→action edges for V2 attribution
-	actions       ActionLister                 // optional; tool_name enrichment for TOOL targets
-	patterns      experience.PatternRepository // optional; V2-8 pattern utility propagation
-	now           func() time.Time
-	id            func() string
+	usages         experience.UsageRepository
+	patternUsages  experience.PatternUsageRepository // optional; V2.1-3
+	experiences    experience.Repository
+	events         EventRepository
+	applier        EventApplier
+	patternEvents  PatternEventRepository // optional; V2.1-4
+	patternApplier PatternEventApplier    // optional; V2.1-4
+	strategy       attribution.Strategy
+	links          LinkLister                   // optional; experience→action edges for V2 attribution
+	actions        ActionLister                 // optional; tool_name enrichment for TOOL targets
+	patterns       experience.PatternRepository // optional; V2-8 / V2.1 pattern learning
+	now            func() time.Time
+	id             func() string
 }
 
 // LinkLister lists experience→action influence edges for an episode.
@@ -92,6 +93,9 @@ func (s *Service) WithActionGraph(links LinkLister, actions ActionLister) *Servi
 // WithPatterns attaches a pattern store so member-experience feedback updates Pattern utility (V2-8).
 func (s *Service) WithPatterns(repo experience.PatternRepository) *Service {
 	s.patterns = repo
+	if s.patternEvents != nil && s.patternApplier == nil && repo != nil {
+		s.patternApplier = NewMemoryPatternEventApplier(repo, s.patternEvents)
+	}
 	return s
 }
 
@@ -101,9 +105,14 @@ func (s *Service) WithPatternUsages(repo experience.PatternUsageRepository) *Ser
 	return s
 }
 
-// WithPatternRewardClaims attaches idempotency marks for PatternUsage rewards (V2.1-3).
-func (s *Service) WithPatternRewardClaims(repo experience.PatternRewardClaimRepository) *Service {
-	s.patternClaims = repo
+// WithPatternLearning attaches PatternLearningEvent ledger + applier (V2.1-4 exactly-once).
+func (s *Service) WithPatternLearning(events PatternEventRepository, applier PatternEventApplier) *Service {
+	s.patternEvents = events
+	if applier != nil {
+		s.patternApplier = applier
+	} else if s.patterns != nil && events != nil {
+		s.patternApplier = NewMemoryPatternEventApplier(s.patterns, events)
+	}
 	return s
 }
 
@@ -244,10 +253,24 @@ func (s *Service) ApplyFeedbackReward(
 				break
 			}
 		}
-		if allApplied {
-			return s.replayApplied(ctx, tenantID, existing)
+		skipPatternIDs, _, skipErr := s.loadPatternSkip(ctx, tenantID, episodeID, target)
+		if skipErr != nil {
+			return nil, skipErr
 		}
-		return s.retryExistingEvents(ctx, tenantID, existing)
+		var updates []UtilityUpdate
+		if allApplied {
+			updates, err = s.replayApplied(ctx, tenantID, existing)
+		} else {
+			updates, err = s.retryExistingEvents(ctx, tenantID, existing, skipPatternIDs)
+		}
+		if err != nil {
+			return updates, err
+		}
+		// Experience events may be APPLIED while derived PatternLearningEvents are still pending.
+		if err := s.ensurePatternLearningForFeedback(ctx, tenantID, episodeID, feedbackID, reward, confidence, target, existing); err != nil {
+			return updates, err
+		}
+		return updates, nil
 	}
 
 	usages, err := s.usages.ListByEpisode(ctx, tenantID, episodeID)
@@ -305,9 +328,12 @@ func (s *Service) ApplyFeedbackReward(
 	}
 
 	if episodeLevel && len(patternUsages) > 0 {
-		if err := s.applyPatternUsageRewards(ctx, tenantID, feedbackID, patternUsages, reward, confidence); err != nil {
+		if err := s.enqueuePatternUsageEvents(ctx, tenantID, episodeID, feedbackID, patternUsages, reward, confidence); err != nil {
 			return updates, err
 		}
+	}
+	if err := s.retryPatternEvents(ctx, tenantID, feedbackID); err != nil {
+		return updates, err
 	}
 	return updates, nil
 }
@@ -316,6 +342,7 @@ func (s *Service) retryExistingEvents(
 	ctx context.Context,
 	tenantID string,
 	events []Event,
+	skipPatternIDs map[string]struct{},
 ) ([]UtilityUpdate, error) {
 	out := make([]UtilityUpdate, 0, len(events))
 	for _, ev := range events {
@@ -328,7 +355,7 @@ func (s *Service) retryExistingEvents(
 			u.AlreadyApplied = true
 			out = append(out, u)
 		case EventPending, EventFailed:
-			u, err := s.applyExistingEvent(ctx, tenantID, ev, nil)
+			u, err := s.applyExistingEvent(ctx, tenantID, ev, skipPatternIDs)
 			if err != nil {
 				return out, err
 			}
@@ -336,6 +363,25 @@ func (s *Service) retryExistingEvents(
 		}
 	}
 	return out, nil
+}
+
+func (s *Service) loadPatternSkip(
+	ctx context.Context,
+	tenantID, episodeID string,
+	target *feedback.Target,
+) (map[string]struct{}, []experience.PatternUsage, error) {
+	skip := map[string]struct{}{}
+	if !isEpisodeLevelTarget(target) || s.patternUsages == nil {
+		return skip, nil, nil
+	}
+	usages, err := s.patternUsages.ListByEpisode(ctx, tenantID, episodeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list pattern usages for episode %s: %w", episodeID, err)
+	}
+	for _, pu := range usages {
+		skip[pu.PatternID] = struct{}{}
+	}
+	return skip, usages, nil
 }
 
 func (s *Service) applyExistingEvent(
@@ -370,7 +416,7 @@ func (s *Service) applyExistingEvent(
 			AlreadyApplied:  result.AlreadyApplied,
 		}
 		if !result.AlreadyApplied {
-			if err := s.propagatePatternLearning(ctx, tenantID, ev.ExperienceID, expReward, ev.Confidence, skipPatternIDs); err != nil {
+			if err := s.enqueueMemberPatternEvents(ctx, tenantID, ev.EpisodeID, ev.FeedbackID, ev.ID, ev.ExperienceID, expReward, ev.Confidence, skipPatternIDs); err != nil {
 				return UtilityUpdate{}, err
 			}
 		}
@@ -380,17 +426,102 @@ func (s *Service) applyExistingEvent(
 	return UtilityUpdate{}, fmt.Errorf("apply learning event %s: %w", ev.ID, lastErr)
 }
 
-// propagatePatternLearning moves Pattern utility when a supporting experience learns (V2-8).
-// Patterns already credited via PatternUsage for this episode-level feedback are skipped (V2.1-3).
-func (s *Service) propagatePatternLearning(
+// ensurePatternLearningForFeedback re-derives missing PatternLearningEvents and retries PENDING/FAILED ones.
+func (s *Service) ensurePatternLearningForFeedback(
 	ctx context.Context,
-	tenantID, experienceID string,
+	tenantID, episodeID, feedbackID string,
+	reward, confidence float64,
+	target *feedback.Target,
+	experienceEvents []Event,
+) error {
+	if s.patternEvents == nil || s.patterns == nil {
+		return nil
+	}
+	episodeLevel := isEpisodeLevelTarget(target)
+	skipPatternIDs := map[string]struct{}{}
+	var patternUsages []experience.PatternUsage
+	if episodeLevel && s.patternUsages != nil {
+		var err error
+		patternUsages, err = s.patternUsages.ListByEpisode(ctx, tenantID, episodeID)
+		if err != nil {
+			return fmt.Errorf("list pattern usages for episode %s: %w", episodeID, err)
+		}
+		for _, pu := range patternUsages {
+			skipPatternIDs[pu.PatternID] = struct{}{}
+		}
+	}
+	for _, ev := range experienceEvents {
+		if ev.Status != EventApplied {
+			continue
+		}
+		expReward := ev.NormalizedReward * ev.Credit
+		if err := s.enqueueMemberPatternEvents(ctx, tenantID, ev.EpisodeID, feedbackID, ev.ID, ev.ExperienceID, expReward, ev.Confidence, skipPatternIDs); err != nil {
+			return err
+		}
+	}
+	if episodeLevel && len(patternUsages) > 0 {
+		if err := s.enqueuePatternUsageEvents(ctx, tenantID, episodeID, feedbackID, patternUsages, reward, confidence); err != nil {
+			return err
+		}
+	}
+	return s.retryPatternEvents(ctx, tenantID, feedbackID)
+}
+
+// enqueueMemberPatternEvents creates derived PatternLearningEvents from an experience learning event (V2.1-4).
+func (s *Service) enqueueMemberPatternEvents(
+	ctx context.Context,
+	tenantID, episodeID, feedbackID, sourceEventID, experienceID string,
 	reward, confidence float64,
 	skipPatternIDs map[string]struct{},
 ) error {
 	if s.patterns == nil {
 		return nil
 	}
+	if s.patternEvents == nil {
+		// Fallback to legacy immediate update when PatternLearningEvent is not wired.
+		return s.propagatePatternLearningLegacy(ctx, tenantID, experienceID, reward, confidence, skipPatternIDs)
+	}
+	pats, err := s.patterns.FindByExperience(ctx, tenantID, []string{experienceID})
+	if err != nil {
+		return fmt.Errorf("find patterns for experience %s: %w", experienceID, err)
+	}
+	now := s.now()
+	for _, p := range pats {
+		if _, skip := skipPatternIDs[p.ID]; skip {
+			continue
+		}
+		if !p.Status.Retrievable() {
+			continue
+		}
+		effective := experience.EffectiveReward(reward, confidence, 1)
+		ev := PatternEvent{
+			ID:                    s.id(),
+			TenantID:              tenantID,
+			FeedbackID:            feedbackID,
+			EpisodeID:             episodeID,
+			PatternID:             p.ID,
+			SourceType:            PatternSourceMember,
+			SourceLearningEventID: sourceEventID,
+			NormalizedReward:      reward,
+			Confidence:            confidence,
+			Credit:                1,
+			EffectiveReward:       effective,
+			Status:                EventPending,
+			CreatedAt:             now,
+		}
+		if err := s.createOrLoadPatternEvent(ctx, ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) propagatePatternLearningLegacy(
+	ctx context.Context,
+	tenantID, experienceID string,
+	reward, confidence float64,
+	skipPatternIDs map[string]struct{},
+) error {
 	pats, err := s.patterns.FindByExperience(ctx, tenantID, []string{experienceID})
 	if err != nil {
 		return fmt.Errorf("find patterns for experience %s: %w", experienceID, err)
@@ -415,15 +546,14 @@ func (s *Service) propagatePatternLearning(
 	return nil
 }
 
-// applyPatternUsageRewards attributes episode-level feedback to Patterns that entered context (V2.1-3).
-// Claims provide insert-if-absent idempotency until PatternLearningEvent (V2.1-4).
-func (s *Service) applyPatternUsageRewards(
+// enqueuePatternUsageEvents creates PATTERN_USAGE PatternLearningEvents (V2.1-4).
+func (s *Service) enqueuePatternUsageEvents(
 	ctx context.Context,
-	tenantID, feedbackID string,
+	tenantID, episodeID, feedbackID string,
 	usages []experience.PatternUsage,
 	reward, confidence float64,
 ) error {
-	if s.patterns == nil || len(usages) == 0 {
+	if s.patternEvents == nil || s.patterns == nil || len(usages) == 0 {
 		return nil
 	}
 	weights := map[string]float64{}
@@ -445,41 +575,67 @@ func (s *Service) applyPatternUsageRewards(
 	now := s.now()
 	for patternID, w := range weights {
 		credit := w / sum
-		if s.patternClaims != nil {
-			already, err := s.patternClaims.Claim(ctx, experience.PatternRewardClaim{
-				TenantID:   tenantID,
-				FeedbackID: feedbackID,
-				PatternID:  patternID,
-				Reward:     reward,
-				Confidence: confidence,
-				Credit:     credit,
-				CreatedAt:  now,
-			})
-			if err != nil {
-				return fmt.Errorf("claim pattern reward %s: %w", patternID, err)
-			}
-			if already {
-				continue
-			}
+		effective := experience.EffectiveReward(reward, confidence, credit)
+		ev := PatternEvent{
+			ID:               s.id(),
+			TenantID:         tenantID,
+			FeedbackID:       feedbackID,
+			EpisodeID:        episodeID,
+			PatternID:        patternID,
+			SourceType:       PatternSourceUsage,
+			NormalizedReward: reward,
+			Confidence:       confidence,
+			Credit:           credit,
+			EffectiveReward:  effective,
+			Status:           EventPending,
+			CreatedAt:        now,
 		}
-		p, err := s.patterns.Get(ctx, tenantID, patternID)
-		if err != nil {
-			return fmt.Errorf("get pattern %s for usage reward: %w", patternID, err)
-		}
-		if !p.Status.Retrievable() {
-			continue
-		}
-		patReward := reward * credit
-		updated, err := experience.ApplyPatternBetaUpdate(p, patReward, confidence, now)
-		if err != nil {
-			return fmt.Errorf("beta update pattern %s from usage: %w", patternID, err)
-		}
-		updated = experience.MaybePromotePattern(updated)
-		if _, err := s.patterns.Update(ctx, updated); err != nil {
-			return fmt.Errorf("persist pattern %s usage reward: %w", patternID, err)
+		if err := s.createOrLoadPatternEvent(ctx, ev); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (s *Service) createOrLoadPatternEvent(ctx context.Context, ev PatternEvent) error {
+	_, err := s.patternEvents.Create(ctx, ev)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrDuplicatePatternEvent) {
+		return fmt.Errorf("create pattern learning event for %s: %w", ev.PatternID, err)
+	}
+	return nil
+}
+
+func (s *Service) retryPatternEvents(ctx context.Context, tenantID, feedbackID string) error {
+	if s.patternEvents == nil || s.patternApplier == nil {
+		return nil
+	}
+	events, err := s.patternEvents.ListByFeedback(ctx, tenantID, feedbackID)
+	if err != nil {
+		return fmt.Errorf("list pattern learning events for feedback %s: %w", feedbackID, err)
+	}
+	for _, ev := range events {
+		switch ev.Status {
+		case EventApplied:
+			continue
+		case EventPending, EventFailed:
+			if _, err := s.applyPatternEvent(ctx, tenantID, ev); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) applyPatternEvent(ctx context.Context, tenantID string, ev PatternEvent) (PatternApplyResult, error) {
+	result, err := s.patternApplier.ApplyPendingPatternEvent(ctx, tenantID, ev)
+	if err != nil {
+		_ = s.patternEvents.MarkFailed(ctx, tenantID, ev.ID)
+		return PatternApplyResult{}, fmt.Errorf("apply pattern learning event %s: %w", ev.ID, err)
+	}
+	return result, nil
 }
 
 func isEpisodeLevelTarget(t *feedback.Target) bool {
@@ -487,6 +643,70 @@ func isEpisodeLevelTarget(t *feedback.Target) bool {
 		return true
 	}
 	return strings.EqualFold(string(t.Type), string(feedback.TargetEpisode))
+}
+
+// ApplyDirectPatternReward applies an explicit Pattern reward via PatternLearningEvent (V2.1-4).
+// idempotencyKey is stored as feedback_id; empty generates a one-shot key (not replay-safe).
+func (s *Service) ApplyDirectPatternReward(
+	ctx context.Context,
+	tenantID, patternID, idempotencyKey string,
+	reward, confidence float64,
+) (experience.Pattern, error) {
+	if s.patterns == nil {
+		return experience.Pattern{}, experience.ErrNotFound
+	}
+	if s.patternEvents == nil || s.patternApplier == nil {
+		return experience.Pattern{}, fmt.Errorf("pattern learning ledger is not configured")
+	}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(patternID) == "" {
+		return experience.Pattern{}, fmt.Errorf("%w: tenant_id and pattern_id are required", experience.ErrInvalidInput)
+	}
+	p, err := s.patterns.Get(ctx, tenantID, patternID)
+	if err != nil {
+		return experience.Pattern{}, err
+	}
+	if !p.Status.Retrievable() {
+		return experience.Pattern{}, fmt.Errorf("%w: pattern %s is not learnable (status=%s)", experience.ErrInvalidInput, patternID, p.Status)
+	}
+	feedbackID := strings.TrimSpace(idempotencyKey)
+	if feedbackID == "" {
+		feedbackID = "direct-" + s.id()
+	}
+	effective := experience.EffectiveReward(reward, confidence, 1)
+	now := s.now()
+	ev := PatternEvent{
+		ID:               s.id(),
+		TenantID:         tenantID,
+		FeedbackID:       feedbackID,
+		PatternID:        patternID,
+		SourceType:       PatternSourceDirect,
+		NormalizedReward: reward,
+		Confidence:       confidence,
+		Credit:           1,
+		EffectiveReward:  effective,
+		Status:           EventPending,
+		CreatedAt:        now,
+	}
+	created, err := s.patternEvents.Create(ctx, ev)
+	if err != nil {
+		if errors.Is(err, ErrDuplicatePatternEvent) {
+			existing, getErr := s.patternEvents.GetByFeedbackPatternSource(ctx, tenantID, feedbackID, patternID, PatternSourceDirect)
+			if getErr != nil {
+				return experience.Pattern{}, getErr
+			}
+			if existing.Status != EventApplied {
+				if _, applyErr := s.applyPatternEvent(ctx, tenantID, existing); applyErr != nil {
+					return experience.Pattern{}, applyErr
+				}
+			}
+			return s.patterns.Get(ctx, tenantID, patternID)
+		}
+		return experience.Pattern{}, fmt.Errorf("create direct pattern learning event: %w", err)
+	}
+	if _, err := s.applyPatternEvent(ctx, tenantID, created); err != nil {
+		return experience.Pattern{}, err
+	}
+	return s.patterns.Get(ctx, tenantID, patternID)
 }
 
 func (s *Service) createAndApplyEvent(

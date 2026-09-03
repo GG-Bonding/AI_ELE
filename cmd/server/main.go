@@ -83,7 +83,10 @@ func run() error {
 	learnSvc = learnSvc.WithActionGraph(actionSvc, actionSvc).
 		WithPatterns(patternRepo).
 		WithPatternUsages(postgres.NewPatternUsageRepository(db)).
-		WithPatternRewardClaims(postgres.NewPatternRewardClaimRepository(db))
+		WithPatternLearning(
+			postgres.NewPatternLearningEventRepository(db),
+			postgres.NewPatternLearningEventApplier(db),
+		)
 	feedbackSvc := feedback.NewServiceWithLearner(
 		postgres.NewFeedbackRepository(db),
 		episodeSvc,
@@ -92,10 +95,11 @@ func run() error {
 	).WithActionVerifier(actionSvc)
 
 	opts := httpserver.Options{
-		Episodes:    episodeSvc,
-		Experiences: experienceSvc,
-		Feedbacks:   feedbackSvc,
-		Actions:     actionSvc,
+		Episodes:       episodeSvc,
+		Experiences:    experienceSvc,
+		Feedbacks:      feedbackSvc,
+		Actions:        actionSvc,
+		PatternRewards: learnSvc,
 	}
 
 	if cfg.LLM.Enabled {

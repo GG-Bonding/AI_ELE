@@ -105,7 +105,7 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2.1-1 ACTION_FIELD field attribution (`affected_fields`) | ✅ landed |
 | V2.1-2 Pattern into retrieval/context | ✅ landed |
 | V2.1-3 Pattern usage / suppress | ✅ landed |
-| V2.1-4 PatternLearningEvent exactly-once | ⬜ next |
-| V2.1-5 Automatic generalization | ⬜ |
+| V2.1-4 PatternLearningEvent exactly-once | ✅ landed |
+| V2.1-5 Automatic generalization | ⬜ next |
 
 Full DoD and architecture: [docs/v2.md](v2.md).
