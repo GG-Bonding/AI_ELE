@@ -101,6 +101,7 @@ func run() error {
 
 	snapshotStore := postgres.NewContextSnapshotRepository(db)
 
+	var llm provider.LLMProvider
 	opts := httpserver.Options{
 		Episodes:       episodeSvc,
 		Experiences:    experienceSvc,
@@ -110,7 +111,7 @@ func run() error {
 	}
 
 	if cfg.LLM.Enabled {
-		llm, err := provider.NewOpenAICompatLLM(provider.OpenAICompatConfig{
+		compat, err := provider.NewOpenAICompatLLM(provider.OpenAICompatConfig{
 			BaseURL: cfg.LLM.BaseURL,
 			APIKey:  cfg.LLM.APIKey,
 			Model:   cfg.LLM.Model,
@@ -118,12 +119,19 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init llm provider: %w", err)
 		}
+		llm = compat
 		ext, err := extractor.New(llm)
 		if err != nil {
 			return fmt.Errorf("init experience extractor: %w", err)
 		}
 		opts.Extractor = ext
-		logger.Info("experience extraction enabled", "model", cfg.LLM.Model, "base_url", cfg.LLM.BaseURL)
+		gen, err := experience.NewLLMPatternGeneralizer(llm)
+		if err != nil {
+			return fmt.Errorf("init llm pattern generalizer: %w", err)
+		}
+		experienceSvc = experienceSvc.WithGeneralizer(gen)
+		opts.Experiences = experienceSvc
+		logger.Info("experience extraction and LLM pattern generalizer enabled", "model", cfg.LLM.Model, "base_url", cfg.LLM.BaseURL)
 	} else {
 		logger.Info("experience extraction disabled")
 	}
@@ -139,10 +147,17 @@ func run() error {
 			return fmt.Errorf("init embedding provider: %w", err)
 		}
 		experienceSvc = experienceSvc.WithEmbedder(embedder)
-		pipeline, err := experience.NewStorePipeline(experienceSvc, embedder, experience.StorePipelineConfig{
+		storeCfg := experience.StorePipelineConfig{
 			ActiveMin:    cfg.Evaluator.ActiveMin,
 			CandidateMin: cfg.Evaluator.CandidateMin,
-		})
+		}
+		if llm != nil {
+			storeCfg.SemanticDedup = experience.SemanticDedupConfig{
+				Judge: experience.NewHybridDedupJudge(llm),
+			}
+			logger.Info("structured semantic dedup judge enabled")
+		}
+		pipeline, err := experience.NewStorePipeline(experienceSvc, embedder, storeCfg)
 		if err != nil {
 			return fmt.Errorf("init store pipeline: %w", err)
 		}

@@ -27,7 +27,7 @@ type PatternDraft struct {
 }
 
 // PatternGeneralizer turns a cluster of experiences into a Pattern draft.
-// HeuristicGeneralizer is the default; an LLM implementation can replace it later.
+// HeuristicPatternGeneralizer is the default; LLMPatternGeneralizer is used when LLM is enabled.
 type PatternGeneralizer interface {
 	Generalize(ctx context.Context, exps []Experience) (PatternDraft, error)
 }
