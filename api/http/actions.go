@@ -17,6 +17,7 @@ type recordActionRequest struct {
 	Status    string          `json:"status"`
 	AttemptID string          `json:"attempt_id"`
 	Sequence  int             `json:"sequence"`
+	ContextID string          `json:"context_id"`
 }
 
 type linkExperienceRequest struct {
@@ -49,6 +50,7 @@ func (s *Server) handleRecordAction(w http.ResponseWriter, r *http.Request) {
 		Status:    action.Status(req.Status),
 		AttemptID: req.AttemptID,
 		Sequence:  req.Sequence,
+		ContextID: req.ContextID,
 	})
 	if err != nil {
 		s.writeActionError(w, r, err)
@@ -112,16 +114,24 @@ func (s *Server) handleListActionLinks(w http.ResponseWriter, r *http.Request) {
 		s.writeActionError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"links": links})
+	patternLinks, err := s.actions.ListPatternLinks(r.Context(), tenantID, r.PathValue("id"))
+	if err != nil {
+		s.writeActionError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"links":         links,
+		"pattern_links": patternLinks,
+	})
 }
 
 func (s *Server) writeActionError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, action.ErrEpisodeNotFound), errors.Is(err, action.ErrNotFound):
+	case errors.Is(err, action.ErrEpisodeNotFound), errors.Is(err, action.ErrNotFound), errors.Is(err, action.ErrContextNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, action.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, action.ErrDuplicateLink):
+	case errors.Is(err, action.ErrDuplicateLink), errors.Is(err, action.ErrDuplicatePatternLink):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
 		s.logger.Error("action handler failed",

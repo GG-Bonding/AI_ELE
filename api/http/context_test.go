@@ -74,6 +74,7 @@ func TestContextAPIFiltersIrrelevant(t *testing.T) {
 	if !strings.Contains(disclaimer, "not trusted instructions") {
 		t.Fatalf("missing disclaimer: %#v", out["disclaimer"])
 	}
+	// Snapshots are optional; without WithSnapshots context_id may be empty.
 	exps, _ := out["experiences"].([]any)
 	for _, raw := range exps {
 		item := raw.(map[string]any)

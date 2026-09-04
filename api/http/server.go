@@ -101,6 +101,7 @@ type ActionService interface {
 	ListActions(ctx context.Context, tenantID, episodeID string) ([]action.AgentAction, error)
 	LinkExperience(ctx context.Context, in action.LinkInput) (action.ExperienceActionLink, error)
 	ListLinks(ctx context.Context, tenantID, episodeID string) ([]action.ExperienceActionLink, error)
+	ListPatternLinks(ctx context.Context, tenantID, episodeID string) ([]action.PatternActionLink, error)
 }
 
 // Server is the HTTP API surface.

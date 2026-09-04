@@ -109,6 +109,7 @@ func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"context_id":  resp.ContextID,
 		"disclaimer":  resp.Context.Disclaimer,
 		"patterns":    patterns,
 		"experiences": experiences,
