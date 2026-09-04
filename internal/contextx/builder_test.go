@@ -172,7 +172,7 @@ func TestBuildContextIncludesActivePatternsAndSuppressesEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, err := retrieval.NewPatternRetriever(patterns)
+	pr, err := retrieval.NewPatternRetriever(patterns, embedder, retrieval.RankConfig{CandidateTopK: 10, DefaultTopK: 5})
 	if err != nil {
 		t.Fatal(err)
 	}

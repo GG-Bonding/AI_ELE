@@ -108,4 +108,16 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | V2.1-4 PatternLearningEvent exactly-once | ✅ landed |
 | V2.1-5 Automatic generalization | ✅ landed |
 
+## V2.2 — Production Intelligence
+
+| Phase | Status |
+| --- | --- |
+| V2.2-1 Pattern embedding semantic retrieval | ✅ landed |
+| V2.2-2 Context provenance → Action | next |
+| V2.2-3 Persistent Evolution jobs | planned |
+| V2.2-4 Structured semantic Judge | planned |
+| V2.2-5 LLM Pattern Generalizer | planned |
+| V2.2-6 V2 SDK | planned |
+| V2.2-7 Learned recovery benchmark | planned |
+
 Full DoD and architecture: [docs/v2.md](v2.md).

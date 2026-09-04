@@ -13,6 +13,12 @@ func (s *Service) WithPatterns(repo PatternRepository) *Service {
 	return s
 }
 
+// WithEmbedder attaches a text embedder used when creating Patterns (V2.2-1).
+func (s *Service) WithEmbedder(e TextEmbedder) *Service {
+	s.embedder = e
+	return s
+}
+
 // WithGeneralizer overrides the default HeuristicPatternGeneralizer.
 func (s *Service) WithGeneralizer(g PatternGeneralizer) *Service {
 	s.generalizer = g
@@ -126,6 +132,17 @@ func (s *Service) Generalize(ctx context.Context, tenantID string, in Generalize
 	}
 	if pattern.Trigger == "" || pattern.Content == "" {
 		return GeneralizeResult{}, fmt.Errorf("%w: generalized trigger/content required", ErrInvalidInput)
+	}
+	if s.embedder != nil {
+		text := pattern.Trigger + "\n" + pattern.Content
+		vecs, err := s.embedder.Embed(ctx, []string{text})
+		if err != nil {
+			return GeneralizeResult{}, fmt.Errorf("embed pattern: %w", err)
+		}
+		if len(vecs) != 1 || len(vecs[0]) == 0 {
+			return GeneralizeResult{}, fmt.Errorf("embed pattern: expected 1 non-empty vector, got %d", len(vecs))
+		}
+		pattern.Embedding = append([]float32(nil), vecs[0]...)
 	}
 
 	created, err := s.patterns.Create(ctx, pattern)

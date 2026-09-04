@@ -2,6 +2,7 @@ package experience
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -27,18 +28,30 @@ func NewMemoryPatternRepository() *MemoryPatternRepository {
 func (m *MemoryPatternRepository) Create(_ context.Context, p Pattern) (Pattern, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.byID[p.ID] = p
-	return p, nil
+	stored := p
+	if p.Embedding != nil {
+		stored.Embedding = append([]float32(nil), p.Embedding...)
+	}
+	m.byID[p.ID] = stored
+	return stored, nil
 }
 
 func (m *MemoryPatternRepository) Update(_ context.Context, p Pattern) (Pattern, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.byID[p.ID]; !ok {
+	existing, ok := m.byID[p.ID]
+	if !ok {
 		return Pattern{}, ErrNotFound
 	}
-	m.byID[p.ID] = p
-	return p, nil
+	stored := p
+	// Preserve embedding unless caller supplies a new vector.
+	if len(p.Embedding) == 0 && len(existing.Embedding) > 0 {
+		stored.Embedding = append([]float32(nil), existing.Embedding...)
+	} else if p.Embedding != nil {
+		stored.Embedding = append([]float32(nil), p.Embedding...)
+	}
+	m.byID[p.ID] = stored
+	return stored, nil
 }
 
 func (m *MemoryPatternRepository) Get(_ context.Context, tenantID, id string) (Pattern, error) {
@@ -48,7 +61,7 @@ func (m *MemoryPatternRepository) Get(_ context.Context, tenantID, id string) (P
 	if !ok || p.TenantID != tenantID {
 		return Pattern{}, ErrNotFound
 	}
-	return p, nil
+	return clonePattern(p), nil
 }
 
 func (m *MemoryPatternRepository) AddEvidence(_ context.Context, ev PatternEvidence) error {
@@ -100,7 +113,7 @@ func (m *MemoryPatternRepository) FindByExperience(_ context.Context, tenantID s
 				continue
 			}
 			seen[pid] = struct{}{}
-			out = append(out, p)
+			out = append(out, clonePattern(p))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -142,7 +155,7 @@ func (m *MemoryPatternRepository) List(_ context.Context, filter PatternListFilt
 		if scopeKey != "" && p.ScopeKey != scopeKey {
 			continue
 		}
-		out = append(out, p)
+		out = append(out, clonePattern(p))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Utility == out[j].Utility {
@@ -156,6 +169,72 @@ func (m *MemoryPatternRepository) List(_ context.Context, filter PatternListFilt
 	return out, nil
 }
 
+func (m *MemoryPatternRepository) Search(_ context.Context, filter PatternSearchFilter) ([]ScoredPattern, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenantID := strings.TrimSpace(filter.TenantID)
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
+	if len(filter.QueryEmbedding) == 0 {
+		return nil, fmt.Errorf("%w: query embedding is required", ErrInvalidInput)
+	}
+	statuses := filter.Statuses
+	if len(statuses) == 0 {
+		statuses = []PatternStatus{PatternStatusActive}
+	}
+	statusOK := statusSet(statuses)
+	topK := filter.TopK
+	if topK <= 0 {
+		topK = 20
+	}
+
+	type scored struct {
+		p   Pattern
+		sim float64
+	}
+	var hits []scored
+	for _, p := range m.byID {
+		if p.TenantID != tenantID {
+			continue
+		}
+		if _, ok := statusOK[p.Status]; !ok {
+			continue
+		}
+		if len(p.Embedding) == 0 {
+			continue
+		}
+		authExp := Experience{Scope: p.Scope, ScopeKey: p.ScopeKey, TenantID: p.TenantID}
+		if !AuthorizedForSearch(authExp, filter.AgentID, filter.UserID, filter.Tools, filter.ScopeKey) {
+			continue
+		}
+		sim := CosineSimilarity(filter.QueryEmbedding, p.Embedding)
+		hits = append(hits, scored{p: clonePattern(p), sim: sim})
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].sim == hits[j].sim {
+			return hits[i].p.ID < hits[j].p.ID
+		}
+		return hits[i].sim > hits[j].sim
+	})
+	if len(hits) > topK {
+		hits = hits[:topK]
+	}
+	out := make([]ScoredPattern, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, ScoredPattern{Pattern: h.p, Similarity: h.sim})
+	}
+	return out, nil
+}
+
+func clonePattern(p Pattern) Pattern {
+	out := p
+	if p.Embedding != nil {
+		out.Embedding = append([]float32(nil), p.Embedding...)
+	}
+	return out
+}
+
 func (m *MemoryPatternRepository) GetByFingerprint(_ context.Context, tenantID, fingerprint string) (Pattern, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -165,7 +244,7 @@ func (m *MemoryPatternRepository) GetByFingerprint(_ context.Context, tenantID, 
 	}
 	for _, p := range m.byID {
 		if p.TenantID == tenantID && p.ClusterFingerprint == fp {
-			return p, nil
+			return clonePattern(p), nil
 		}
 	}
 	return Pattern{}, ErrNotFound

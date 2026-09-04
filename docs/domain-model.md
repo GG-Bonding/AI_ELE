@@ -75,10 +75,14 @@ Generalized rule derived from ≥3 experiences across ≥3 distinct episodes (sa
 | Evidence | `pattern_evidence` rows (pattern ↔ experience) |
 | Relation | `DERIVED_FROM` from pattern id → experience id |
 | ClusterFingerprint | SHA-256 of sorted support experience IDs (V2.1-5 dedupe) |
+| Embedding | `trigger + content` vector (V2.2-1); used for semantic Pattern retrieval |
 
 When a supporting experience receives feedback, Pattern utility updates with the same signed reward (idempotent with learning events). Strong enough practice promotes `CANDIDATE` → `ACTIVE`.
 
 **V2.1-2:** `ACTIVE` Patterns enter agent context via `PatternRetriever`. Evidence experiences are suppressed by default.
+
+**V2.2-1:** Pattern retrieval is embedding-first:
+`SemanticSimilarity × Utility × Confidence × Validity` (scope is a hard auth filter). Legacy rows without embeddings fall back to lexical overlap.
 
 **V2.1-5:** `POST /api/v1/patterns/evolve` scans ACTIVE high-utility neighborhoods (cosine ≥ 0.85) and auto-calls Generalize.
 

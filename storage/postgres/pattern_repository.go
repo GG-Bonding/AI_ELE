@@ -12,6 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+const patternSelectCols = `id, tenant_id, type, scope, scope_key, trigger_text, content,
+		       confidence, utility, alpha, beta, success_count, failure_count,
+		       support_count, status, cluster_fingerprint, created_at, updated_at,
+		       embedding::text`
+
 // PatternRepository persists patterns in PostgreSQL.
 type PatternRepository struct {
 	db *sql.DB
@@ -23,16 +28,24 @@ func NewPatternRepository(db *sql.DB) *PatternRepository {
 }
 
 func (r *PatternRepository) Create(ctx context.Context, p experience.Pattern) (experience.Pattern, error) {
+	var emb any
+	if len(p.Embedding) > 0 {
+		vec, err := formatVector(p.Embedding)
+		if err != nil {
+			return experience.Pattern{}, err
+		}
+		emb = vec
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO patterns (
 			id, tenant_id, type, scope, scope_key, trigger_text, content,
 			confidence, utility, alpha, beta, success_count, failure_count,
-			support_count, status, cluster_fingerprint, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			support_count, status, cluster_fingerprint, created_at, updated_at, embedding
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::vector)
 	`,
 		p.ID, p.TenantID, string(p.Type), string(p.Scope), p.ScopeKey, p.Trigger, p.Content,
 		p.Confidence, p.Utility, p.Alpha, p.Beta, p.SuccessCount, p.FailureCount,
-		p.SupportCount, string(p.Status), p.ClusterFingerprint, p.CreatedAt, p.UpdatedAt,
+		p.SupportCount, string(p.Status), p.ClusterFingerprint, p.CreatedAt, p.UpdatedAt, emb,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -45,6 +58,7 @@ func (r *PatternRepository) Create(ctx context.Context, p experience.Pattern) (e
 }
 
 func (r *PatternRepository) Update(ctx context.Context, p experience.Pattern) (experience.Pattern, error) {
+	// Embedding is set at create / re-embed paths; utility/status updates leave it unchanged.
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE patterns SET
 			type = $1, scope = $2, scope_key = $3, trigger_text = $4, content = $5,
@@ -74,9 +88,7 @@ func (r *PatternRepository) Update(ctx context.Context, p experience.Pattern) (e
 
 func (r *PatternRepository) Get(ctx context.Context, tenantID, id string) (experience.Pattern, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
-		       confidence, utility, alpha, beta, success_count, failure_count,
-		       support_count, status, cluster_fingerprint, created_at, updated_at
+		SELECT `+patternSelectCols+`
 		FROM patterns
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id)
@@ -96,9 +108,7 @@ func (r *PatternRepository) GetByFingerprint(ctx context.Context, tenantID, fing
 		return experience.Pattern{}, experience.ErrNotFound
 	}
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
-		       confidence, utility, alpha, beta, success_count, failure_count,
-		       support_count, status, cluster_fingerprint, created_at, updated_at
+		SELECT `+patternSelectCols+`
 		FROM patterns
 		WHERE tenant_id = $1 AND cluster_fingerprint = $2
 	`, tenantID, fp)
@@ -174,7 +184,8 @@ func (r *PatternRepository) FindByExperience(ctx context.Context, tenantID strin
 	q := fmt.Sprintf(`
 		SELECT DISTINCT p.id, p.tenant_id, p.type, p.scope, p.scope_key, p.trigger_text, p.content,
 		       p.confidence, p.utility, p.alpha, p.beta, p.success_count, p.failure_count,
-		       p.support_count, p.status, p.cluster_fingerprint, p.created_at, p.updated_at
+		       p.support_count, p.status, p.cluster_fingerprint, p.created_at, p.updated_at,
+		       p.embedding::text
 		FROM patterns p
 		INNER JOIN pattern_evidence pe ON pe.pattern_id = p.id
 		WHERE p.tenant_id = $1 AND (%s)
@@ -239,9 +250,7 @@ func (r *PatternRepository) List(ctx context.Context, filter experience.PatternL
 	}
 
 	q := `
-		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
-		       confidence, utility, alpha, beta, success_count, failure_count,
-		       support_count, status, cluster_fingerprint, created_at, updated_at
+		SELECT ` + patternSelectCols + `
 		FROM patterns
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY utility DESC, id ASC`
@@ -270,6 +279,76 @@ func (r *PatternRepository) List(ctx context.Context, filter experience.PatternL
 	return out, nil
 }
 
+func (r *PatternRepository) Search(ctx context.Context, filter experience.PatternSearchFilter) ([]experience.ScoredPattern, error) {
+	tenantID := strings.TrimSpace(filter.TenantID)
+	if tenantID == "" {
+		return nil, experience.ErrInvalidInput
+	}
+	if len(filter.QueryEmbedding) == 0 {
+		return nil, fmt.Errorf("%w: query embedding is required", experience.ErrInvalidInput)
+	}
+	vec, err := formatVector(filter.QueryEmbedding)
+	if err != nil {
+		return nil, err
+	}
+	topK := filter.TopK
+	if topK <= 0 {
+		topK = 20
+	}
+
+	args := []any{tenantID, vec}
+	where := []string{"tenant_id = $1", "embedding IS NOT NULL"}
+
+	statuses := filter.Statuses
+	if len(statuses) == 0 {
+		statuses = []experience.PatternStatus{experience.PatternStatusActive}
+	}
+	statusPlaceholders := make([]string, len(statuses))
+	for i, s := range statuses {
+		args = append(args, string(s))
+		statusPlaceholders[i] = fmt.Sprintf("$%d", len(args))
+	}
+	where = append(where, "status IN ("+strings.Join(statusPlaceholders, ",")+")")
+
+	authSQL, authArgs := scopeAuthSQL(filter.AgentID, filter.UserID, filter.ScopeKey, filter.Tools, args)
+	where = append(where, authSQL)
+	args = authArgs
+
+	args = append(args, topK)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
+
+	q := fmt.Sprintf(`
+		SELECT id, tenant_id, type, scope, scope_key, trigger_text, content,
+		       confidence, utility, alpha, beta, success_count, failure_count,
+		       support_count, status, cluster_fingerprint, created_at, updated_at,
+		       embedding::text,
+		       1 - (embedding <=> $2::vector) AS similarity
+		FROM patterns
+		WHERE %s
+		ORDER BY embedding <=> $2::vector
+		LIMIT %s
+	`, strings.Join(where, " AND "), limitPlaceholder)
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search patterns: %w", err)
+	}
+	defer rows.Close()
+
+	var out []experience.ScoredPattern
+	for rows.Next() {
+		p, sim, err := scanPatternScored(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan pattern search row: %w", err)
+		}
+		out = append(out, experience.ScoredPattern{Pattern: p, Similarity: sim})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pattern search: %w", err)
+	}
+	return out, nil
+}
+
 type patternScanner interface {
 	Scan(dest ...any) error
 }
@@ -278,10 +357,12 @@ func scanPattern(row patternScanner) (experience.Pattern, error) {
 	var p experience.Pattern
 	var typ, scope, status string
 	var createdAt, updatedAt time.Time
+	var embText sql.NullString
 	if err := row.Scan(
 		&p.ID, &p.TenantID, &typ, &scope, &p.ScopeKey, &p.Trigger, &p.Content,
 		&p.Confidence, &p.Utility, &p.Alpha, &p.Beta, &p.SuccessCount, &p.FailureCount,
 		&p.SupportCount, &status, &p.ClusterFingerprint, &createdAt, &updatedAt,
+		&embText,
 	); err != nil {
 		return experience.Pattern{}, err
 	}
@@ -290,5 +371,41 @@ func scanPattern(row patternScanner) (experience.Pattern, error) {
 	p.Status = experience.PatternStatus(status)
 	p.CreatedAt = createdAt
 	p.UpdatedAt = updatedAt
+	if embText.Valid && strings.TrimSpace(embText.String) != "" {
+		emb, err := parseVector(embText.String)
+		if err != nil {
+			return experience.Pattern{}, fmt.Errorf("parse pattern embedding: %w", err)
+		}
+		p.Embedding = emb
+	}
 	return p, nil
+}
+
+func scanPatternScored(row patternScanner) (experience.Pattern, float64, error) {
+	var p experience.Pattern
+	var typ, scope, status string
+	var createdAt, updatedAt time.Time
+	var embText sql.NullString
+	var sim float64
+	if err := row.Scan(
+		&p.ID, &p.TenantID, &typ, &scope, &p.ScopeKey, &p.Trigger, &p.Content,
+		&p.Confidence, &p.Utility, &p.Alpha, &p.Beta, &p.SuccessCount, &p.FailureCount,
+		&p.SupportCount, &status, &p.ClusterFingerprint, &createdAt, &updatedAt,
+		&embText, &sim,
+	); err != nil {
+		return experience.Pattern{}, 0, err
+	}
+	p.Type = experience.Type(typ)
+	p.Scope = experience.Scope(scope)
+	p.Status = experience.PatternStatus(status)
+	p.CreatedAt = createdAt
+	p.UpdatedAt = updatedAt
+	if embText.Valid && strings.TrimSpace(embText.String) != "" {
+		emb, err := parseVector(embText.String)
+		if err != nil {
+			return experience.Pattern{}, 0, fmt.Errorf("parse pattern embedding: %w", err)
+		}
+		p.Embedding = emb
+	}
+	return p, sim, nil
 }

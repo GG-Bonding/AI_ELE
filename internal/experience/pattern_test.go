@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 )
 
 func TestGeneralizeCreatesPatternWithDerivedFrom(t *testing.T) {
@@ -154,6 +155,47 @@ func TestGeneralizeRejectsLowUtility(t *testing.T) {
 	}
 	if res.Created {
 		t.Fatal("low utility should not generalize")
+	}
+}
+
+func TestGeneralizeEmbedsPattern(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := experience.NewMemoryRepository()
+	patterns := experience.NewMemoryPatternRepository()
+	embedder := &provider.MockEmbedding{Dim: 8}
+	svc := experience.NewService(repo).WithPatterns(patterns).WithEmbedder(embedder)
+
+	ids := make([]string, 0, 3)
+	for i, ep := range []string{"ep_a", "ep_b", "ep_c"} {
+		exp := mustCreateExp(t, svc, experience.CreateInput{
+			TenantID: "t", Type: experience.TypeProcedural, Scope: experience.ScopeTool, ScopeKey: "jira",
+			Trigger: "create or update jira issue when project key unknown",
+			Content: "Resolve Jira project key before mutating issues.",
+			SourceEpisodeID: ep, Confidence: 0.9, Embedding: unitVec(4),
+			Evidence: experience.Evidence{
+				SourceEpisodeID: ep, SupportEpisodeIDs: []string{ep},
+				SuccessAttemptCount: 2,
+			},
+			Status: experience.StatusActive,
+		})
+		exp.Utility = 0.8
+		updated, err := repo.Update(ctx, exp)
+		if err != nil {
+			t.Fatalf("update utility %d: %v", i, err)
+		}
+		ids = append(ids, updated.ID)
+	}
+
+	res, err := svc.Generalize(ctx, "t", experience.GeneralizeInput{ExperienceIDs: ids})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Created {
+		t.Fatalf("expected creation, skipped=%q", res.Skipped)
+	}
+	if len(res.Pattern.Embedding) != 8 {
+		t.Fatalf("want embedding dim 8, got %d", len(res.Pattern.Embedding))
 	}
 }
 

@@ -54,10 +54,31 @@ type Pattern struct {
 	// ClusterFingerprint is SHA-256 of sorted supporting experience IDs (V2.1-5 dedupe).
 	ClusterFingerprint string `json:"cluster_fingerprint,omitempty"`
 
+	// Embedding is persisted for semantic pattern retrieval (V2.2-1); omitted from API responses.
+	Embedding []float32 `json:"-"`
+
 	Status PatternStatus `json:"status"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ScoredPattern is a pattern with cosine similarity from vector search (V2.2-1).
+type ScoredPattern struct {
+	Pattern    Pattern
+	Similarity float64
+}
+
+// PatternSearchFilter selects ACTIVE patterns by embedding similarity (V2.2-1).
+type PatternSearchFilter struct {
+	TenantID       string
+	Statuses       []PatternStatus
+	QueryEmbedding []float32
+	TopK           int
+	AgentID        string
+	UserID         string
+	ScopeKey       string
+	Tools          []string
 }
 
 // PatternEvidence links a Pattern to a supporting Experience.
@@ -78,6 +99,8 @@ type PatternRepository interface {
 	FindByExperience(ctx context.Context, tenantID string, experienceIDs []string) ([]Pattern, error)
 	// List returns patterns matching filter (tenant required). Used by Pattern retrieval (V2.1-2).
 	List(ctx context.Context, filter PatternListFilter) ([]Pattern, error)
+	// Search returns ACTIVE (or filtered) patterns by embedding cosine similarity (V2.2-1).
+	Search(ctx context.Context, filter PatternSearchFilter) ([]ScoredPattern, error)
 	// GetByFingerprint returns a pattern with the given cluster fingerprint (V2.1-5).
 	GetByFingerprint(ctx context.Context, tenantID, fingerprint string) (Pattern, error)
 }

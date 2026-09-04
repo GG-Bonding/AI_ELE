@@ -131,6 +131,7 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init embedding provider: %w", err)
 		}
+		experienceSvc = experienceSvc.WithEmbedder(embedder)
 		pipeline, err := experience.NewStorePipeline(experienceSvc, embedder, experience.StorePipelineConfig{
 			ActiveMin:    cfg.Evaluator.ActiveMin,
 			CandidateMin: cfg.Evaluator.CandidateMin,
@@ -138,7 +139,8 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init store pipeline: %w", err)
 		}
-		retriever, err := retrieval.New(experienceSvc, embedder, rankConfigFrom(cfg.Retrieval))
+		rankCfg := rankConfigFrom(cfg.Retrieval)
+		retriever, err := retrieval.New(experienceSvc, embedder, rankCfg)
 		if err != nil {
 			return fmt.Errorf("init retriever: %w", err)
 		}
@@ -152,7 +154,7 @@ func run() error {
 			return fmt.Errorf("init context service: %w", err)
 		}
 		contextSvc = contextSvc.WithConflicts(experienceSvc)
-		if patternRetriever, err := retrieval.NewPatternRetriever(patternRepo); err != nil {
+		if patternRetriever, err := retrieval.NewPatternRetriever(patternRepo, embedder, rankCfg); err != nil {
 			return fmt.Errorf("init pattern retriever: %w", err)
 		} else {
 			contextSvc = contextSvc.WithPatterns(patternRetriever)

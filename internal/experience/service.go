@@ -10,6 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// TextEmbedder embeds text for experience/pattern storage (narrow port; avoids provider import).
+type TextEmbedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
 // Service owns experience create/get/search rules.
 type Service struct {
 	repo         Repository
@@ -18,6 +23,7 @@ type Service struct {
 	generalizer  PatternGeneralizer // optional; defaults to HeuristicPatternGeneralizer
 	skills       SkillRepository    // optional; V2-9 skill candidates
 	skillBuilder SkillBuilder       // optional; defaults to HeuristicSkillBuilder
+	embedder     TextEmbedder       // optional; V2.2-1 pattern embedding on generalize
 	now          func() time.Time
 	id           func() string
 }
