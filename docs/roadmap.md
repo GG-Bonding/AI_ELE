@@ -114,8 +114,8 @@ See [docs/evaluation.md](evaluation.md). Core proof remains the Jira project-key
 | --- | --- |
 | V2.2-1 Pattern embedding semantic retrieval | ✅ landed |
 | V2.2-2 Context provenance → Action | ✅ landed |
-| V2.2-3 Persistent Evolution jobs | next |
-| V2.2-4 Structured semantic Judge | planned |
+| V2.2-3 Persistent Evolution jobs | ✅ landed |
+| V2.2-4 Structured semantic Judge | next |
 | V2.2-5 LLM Pattern Generalizer | planned |
 | V2.2-6 V2 SDK | planned |
 | V2.2-7 Learned recovery benchmark | planned |

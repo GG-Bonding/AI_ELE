@@ -86,6 +86,8 @@ When a supporting experience receives feedback, Pattern utility updates with the
 
 **V2.2-2:** `POST /context` returns `context_id` (persisted snapshot of pattern/experience IDs that entered the payload). Recording an Action with that `context_id` auto-creates coarse Experience→Action and Pattern→Action links (`evidence=context:<id>`). Field-level `affected_fields` remains available via manual link API.
 
+**V2.2-3:** High-utility ACTIVE Experience updates mark `evolution_dirty_groups`. A background worker claims dirty families, runs scoped `AutoGeneralize`, and records `evolution_jobs` (`PENDING` → `PROCESSING` → `APPLIED`/`FAILED`). Manual `POST /patterns/evolve` remains available.
+
 **V2.1-5:** `POST /api/v1/patterns/evolve` scans ACTIVE high-utility neighborhoods (cosine ≥ 0.85) and auto-calls Generalize.
 
 ### Skill Candidate (V2-9)

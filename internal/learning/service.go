@@ -28,8 +28,14 @@ type Service struct {
 	links          LinkLister                   // optional; experience→action edges for V2 attribution
 	actions        ActionLister                 // optional; tool_name enrichment for TOOL targets
 	patterns       experience.PatternRepository // optional; V2-8 / V2.1 pattern learning
+	evolutionDirty evolutionDirtyMarker         // optional; V2.2-3 mark families for auto evolution
 	now            func() time.Time
 	id             func() string
+}
+
+// evolutionDirtyMarker records experience families that may need Pattern generalization.
+type evolutionDirtyMarker interface {
+	MarkDirty(ctx context.Context, tenantID string, typ experience.Type, scope experience.Scope, scopeKey string) error
 }
 
 // LinkLister lists experience→action influence edges for an episode.
@@ -116,6 +122,11 @@ func (s *Service) WithPatternLearning(events PatternEventRepository, applier Pat
 	return s
 }
 
+// WithEvolutionDirty marks experience families for background Pattern evolution (V2.2-3).
+func (s *Service) WithEvolutionDirty(marker evolutionDirtyMarker) *Service {
+	s.evolutionDirty = marker
+	return s
+}
 
 // PatternRecord captures a pattern that entered context for an episode.
 type PatternRecord struct {
@@ -419,6 +430,7 @@ func (s *Service) applyExistingEvent(
 			if err := s.enqueueMemberPatternEvents(ctx, tenantID, ev.EpisodeID, ev.FeedbackID, ev.ID, ev.ExperienceID, expReward, ev.Confidence, skipPatternIDs); err != nil {
 				return UtilityUpdate{}, err
 			}
+			s.maybeMarkEvolutionDirty(ctx, tenantID, result.Experience)
 		}
 		return u, nil
 	}
@@ -830,4 +842,20 @@ func (s *Service) loadAttributionLinks(ctx context.Context, tenantID, episodeID 
 		})
 	}
 	return out, nil
+}
+
+func (s *Service) maybeMarkEvolutionDirty(ctx context.Context, tenantID string, exp experience.Experience) {
+	if s.evolutionDirty == nil {
+		return
+	}
+	if exp.Status != experience.StatusActive {
+		return
+	}
+	if exp.Utility < experience.MinGeneralizeAvgUtility {
+		return
+	}
+	if exp.Evidence.SupportCount() <= 0 && strings.TrimSpace(exp.SourceEpisodeID) == "" {
+		return
+	}
+	_ = s.evolutionDirty.MarkDirty(ctx, tenantID, exp.Type, exp.Scope, exp.ScopeKey)
 }

@@ -17,10 +17,14 @@ const (
 
 // AutoGeneralizeOptions configures an evolution scan for a tenant.
 type AutoGeneralizeOptions struct {
-	MinUtility     float64 // default MinGeneralizeAvgUtility
-	MinSimilarity  float64 // default MinClusterSimilarity
-	MaxCandidates  int     // default MaxScanExperiences
-	Statuses       []Status
+	MinUtility    float64 // default MinGeneralizeAvgUtility
+	MinSimilarity float64 // default MinClusterSimilarity
+	MaxCandidates int     // default MaxScanExperiences
+	Statuses      []Status
+	// Optional family scope for dirty-group workers (V2.2-3). Empty = tenant-wide.
+	Type     Type
+	Scope    Scope
+	ScopeKey string
 }
 
 // AutoGeneralizeResult summarizes one scan pass.
@@ -72,6 +76,9 @@ func (s *Service) AutoGeneralize(ctx context.Context, tenantID string, opts Auto
 
 	candidates, err := s.repo.List(ctx, ListFilter{
 		TenantID:   tenantID,
+		Types:      optionalType(opts.Type),
+		Scopes:     optionalScope(opts.Scope),
+		ScopeKey:   opts.ScopeKey,
 		Statuses:   statuses,
 		MinUtility: opts.MinUtility,
 		Limit:      opts.MaxCandidates,
@@ -198,4 +205,18 @@ func lexicalJaccard(a, b string) float64 {
 		return 0
 	}
 	return float64(inter) / float64(union)
+}
+
+func optionalType(t Type) []Type {
+	if t == "" {
+		return nil
+	}
+	return []Type{t}
+}
+
+func optionalScope(s Scope) []Scope {
+	if s == "" {
+		return nil
+	}
+	return []Scope{s}
 }

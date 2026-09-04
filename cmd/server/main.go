@@ -18,6 +18,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episodelearn"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/evolutionjob"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
@@ -89,6 +90,8 @@ func run() error {
 			postgres.NewPatternLearningEventRepository(db),
 			postgres.NewPatternLearningEventApplier(db),
 		)
+	evoRepo := postgres.NewEvolutionJobRepository(db)
+	learnSvc = learnSvc.WithEvolutionDirty(evoRepo)
 	feedbackSvc := feedback.NewServiceWithLearner(
 		postgres.NewFeedbackRepository(db),
 		episodeSvc,
@@ -202,6 +205,21 @@ func run() error {
 		opts.Learning = processor
 		logger.Info("episode learning processor enabled")
 	}
+
+	evoProc, err := evolutionjob.NewProcessor(experienceSvc, evoRepo)
+	if err != nil {
+		return fmt.Errorf("init evolution processor: %w", err)
+	}
+	evoProc = evoProc.WithLogger(logger)
+	if n, err := evoProc.RecoverStaleJobs(context.Background()); err != nil {
+		return fmt.Errorf("recover stale evolution jobs: %w", err)
+	} else if n > 0 {
+		logger.Info("recovered stale evolution jobs", "count", n)
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	go evoProc.RunLoop(workerCtx, evolutionjob.DefaultSweepInterval)
+	logger.Info("evolution worker enabled", "interval", evolutionjob.DefaultSweepInterval.String())
 
 	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, opts)
 	httpServer := &http.Server{
