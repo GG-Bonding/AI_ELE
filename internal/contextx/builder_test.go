@@ -180,13 +180,24 @@ func TestBuildContextIncludesActivePatternsAndSuppressesEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc = svc.WithPatterns(pr)
+	snaps := contextx.NewMemorySnapshotStore()
+	svc = svc.WithPatterns(pr).WithSnapshots(snaps)
 
 	resp, err := svc.BuildContext(ctx, contextx.Request{
-		TenantID: "t", Task: task, Tools: []string{"jira"}, MaxExperiences: 5,
+		TenantID: "t", Task: task, Tools: []string{"jira"}, MaxExperiences: 5, EpisodeID: "ep1",
 	})
 	if err != nil {
 		t.Fatalf("BuildContext: %v", err)
+	}
+	if resp.ContextID == "" || !strings.HasPrefix(resp.ContextID, "ctx_") {
+		t.Fatalf("context_id=%q", resp.ContextID)
+	}
+	snap, err := svc.GetSnapshot(ctx, "t", resp.ContextID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.PatternIDs) != 1 || snap.PatternIDs[0] != "p1" {
+		t.Fatalf("snapshot patterns=%v", snap.PatternIDs)
 	}
 	if len(resp.Context.Patterns) != 1 || resp.Context.Patterns[0].ID != "p1" {
 		t.Fatalf("patterns=%#v", resp.Context.Patterns)

@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/learning"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
+	"github.com/google/uuid"
 )
 
 // Retriever is the retrieval port used by the context service.
@@ -38,6 +40,9 @@ type Service struct {
 	builder   *Builder
 	usages    UsageRecorder
 	conflicts ConflictLookup
+	snapshots SnapshotStore
+	now       func() time.Time
+	id        func() string
 }
 
 // NewService constructs a context service.
@@ -56,7 +61,14 @@ func NewServiceWithUsage(retriever Retriever, sel *selector.Selector, builder *B
 	if builder == nil {
 		return nil, fmt.Errorf("context builder is required")
 	}
-	return &Service{retriever: retriever, selector: sel, builder: builder, usages: usages}, nil
+	return &Service{
+		retriever: retriever,
+		selector:  sel,
+		builder:   builder,
+		usages:    usages,
+		now:       time.Now().UTC,
+		id:        func() string { return "ctx_" + uuid.NewString() },
+	}, nil
 }
 
 // WithConflicts attaches a conflict lookup used to BLOCK unresolved opposing experiences.
@@ -68,6 +80,12 @@ func (s *Service) WithConflicts(lookup ConflictLookup) *Service {
 // WithPatterns attaches a pattern retriever so ACTIVE patterns enter context (V2.1-2).
 func (s *Service) WithPatterns(src PatternSource) *Service {
 	s.patterns = src
+	return s
+}
+
+// WithSnapshots persists context builds so Actions can bind provenance (V2.2-2).
+func (s *Service) WithSnapshots(store SnapshotStore) *Service {
+	s.snapshots = store
 	return s
 }
 
@@ -87,6 +105,7 @@ type Request struct {
 
 // Response includes the safe context payload plus selection diagnostics.
 type Response struct {
+	ContextID  string            `json:"context_id,omitempty"`
 	Context    Payload           `json:"context"`
 	Selections []selector.Result `json:"selections,omitempty"`
 }
@@ -171,11 +190,16 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 		return Response{}, fmt.Errorf("build context: %w", err)
 	}
 
+	expIDs := make([]string, 0, len(payload.Experiences))
+	for _, item := range payload.Experiences {
+		expIDs = append(expIDs, item.Source)
+	}
+	patIDs := make([]string, 0, len(payload.Patterns))
+	for _, item := range payload.Patterns {
+		patIDs = append(patIDs, item.ID)
+	}
+
 	if s.usages != nil && strings.TrimSpace(req.EpisodeID) != "" {
-		ids := make([]string, 0, len(payload.Experiences))
-		for _, item := range payload.Experiences {
-			ids = append(ids, item.Source)
-		}
 		patternRecords := make([]learning.PatternRecord, 0, len(payload.Patterns))
 		byID := map[string]retrieval.RankedPattern{}
 		for _, rp := range rankedPatterns {
@@ -195,12 +219,39 @@ func (s *Service) BuildContext(ctx context.Context, req Request) (Response, erro
 			TenantID:   req.TenantID,
 			EpisodeID:  req.EpisodeID,
 			Selections: selected,
-			ContextIDs: ids,
+			ContextIDs: expIDs,
 			Patterns:   patternRecords,
 		}); err != nil {
 			return Response{}, fmt.Errorf("record experience usages for episode %s: %w", req.EpisodeID, err)
 		}
 	}
 
-	return Response{Context: payload, Selections: selected}, nil
+	out := Response{Context: payload, Selections: selected}
+	if s.snapshots != nil {
+		snap := Snapshot{
+			ID:            s.id(),
+			TenantID:      strings.TrimSpace(req.TenantID),
+			EpisodeID:     strings.TrimSpace(req.EpisodeID),
+			AgentID:       strings.TrimSpace(req.AgentID),
+			UserID:        strings.TrimSpace(req.UserID),
+			Task:          strings.TrimSpace(req.Task),
+			ExperienceIDs: expIDs,
+			PatternIDs:    patIDs,
+			CreatedAt:     s.now(),
+		}
+		created, err := s.snapshots.Create(ctx, snap)
+		if err != nil {
+			return Response{}, fmt.Errorf("persist context snapshot: %w", err)
+		}
+		out.ContextID = created.ID
+	}
+	return out, nil
+}
+
+// GetSnapshot returns a persisted context snapshot (V2.2-2 provenance).
+func (s *Service) GetSnapshot(ctx context.Context, tenantID, contextID string) (Snapshot, error) {
+	if s.snapshots == nil {
+		return Snapshot{}, ErrSnapshotNotFound
+	}
+	return s.snapshots.Get(ctx, tenantID, contextID)
 }

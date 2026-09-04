@@ -8,22 +8,26 @@ import (
 
 // MemoryRepository is an in-memory Repository for unit tests.
 type MemoryRepository struct {
-	mu       sync.Mutex
-	actions  map[string]AgentAction            // id → action
-	byEp     map[string][]string               // tenant/episode → action ids
-	links    map[string]ExperienceActionLink   // id → link
-	linkKeys map[string]string                 // tenant/exp/action → link id
-	seq      map[string]int                    // tenant/episode → last sequence
+	mu          sync.Mutex
+	actions     map[string]AgentAction          // id → action
+	byEp        map[string][]string             // tenant/episode → action ids
+	links       map[string]ExperienceActionLink // id → link
+	linkKeys    map[string]string               // tenant/exp/action → link id
+	patLinks    map[string]PatternActionLink    // id → pattern link
+	patLinkKeys map[string]string               // tenant/pat/action → link id
+	seq         map[string]int                  // tenant/episode → last sequence
 }
 
 // NewMemoryRepository constructs an empty in-memory store.
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		actions:  make(map[string]AgentAction),
-		byEp:     make(map[string][]string),
-		links:    make(map[string]ExperienceActionLink),
-		linkKeys: make(map[string]string),
-		seq:      make(map[string]int),
+		actions:     make(map[string]AgentAction),
+		byEp:        make(map[string][]string),
+		links:       make(map[string]ExperienceActionLink),
+		linkKeys:    make(map[string]string),
+		patLinks:    make(map[string]PatternActionLink),
+		patLinkKeys: make(map[string]string),
+		seq:         make(map[string]int),
 	}
 }
 
@@ -33,6 +37,10 @@ func epKey(tenantID, episodeID string) string {
 
 func linkKey(tenantID, experienceID, actionID string) string {
 	return tenantID + "/" + experienceID + "/" + actionID
+}
+
+func patLinkKey(tenantID, patternID, actionID string) string {
+	return tenantID + "/" + patternID + "/" + actionID
 }
 
 func (m *MemoryRepository) CreateAction(_ context.Context, a AgentAction) (AgentAction, error) {
@@ -119,6 +127,54 @@ func (m *MemoryRepository) ListLinksByAction(_ context.Context, tenantID, action
 	defer m.mu.Unlock()
 	out := make([]ExperienceActionLink, 0)
 	for _, link := range m.links {
+		if link.TenantID == tenantID && link.ActionID == actionID {
+			out = append(out, link)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (m *MemoryRepository) CreatePatternLink(_ context.Context, link PatternActionLink) (PatternActionLink, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := patLinkKey(link.TenantID, link.PatternID, link.ActionID)
+	if _, exists := m.patLinkKeys[key]; exists {
+		return PatternActionLink{}, ErrDuplicatePatternLink
+	}
+	m.patLinks[link.ID] = link
+	m.patLinkKeys[key] = link.ID
+	return link, nil
+}
+
+func (m *MemoryRepository) ListPatternLinksByEpisode(_ context.Context, tenantID, episodeID string) ([]PatternActionLink, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PatternActionLink, 0)
+	for _, link := range m.patLinks {
+		if link.TenantID == tenantID && link.EpisodeID == episodeID {
+			out = append(out, link)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (m *MemoryRepository) ListPatternLinksByAction(_ context.Context, tenantID, actionID string) ([]PatternActionLink, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PatternActionLink, 0)
+	for _, link := range m.patLinks {
 		if link.TenantID == tenantID && link.ActionID == actionID {
 			out = append(out, link)
 		}

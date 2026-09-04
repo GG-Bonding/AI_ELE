@@ -65,6 +65,9 @@ type AgentAction struct {
 	// AttemptID optionally links back to a Phase-1 Attempt row.
 	AttemptID string `json:"attempt_id,omitempty"`
 
+	// ContextID optionally references the context snapshot that informed this action (V2.2-2).
+	ContextID string `json:"context_id,omitempty"`
+
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -84,4 +87,16 @@ type ExperienceActionLink struct {
 	AffectedFields []string  `json:"affected_fields,omitempty"`
 	Evidence       string    `json:"evidence,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+// PatternActionLink asserts that a pattern influenced a specific action (V2.2-2 provenance).
+type PatternActionLink struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenant_id"`
+	EpisodeID string    `json:"episode_id"`
+	PatternID string    `json:"pattern_id"`
+	ActionID  string    `json:"action_id"`
+	Influence float64   `json:"influence"`
+	Evidence  string    `json:"evidence,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }

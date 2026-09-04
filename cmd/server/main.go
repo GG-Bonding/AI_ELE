@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -64,7 +65,8 @@ func run() error {
 	}
 
 	episodeSvc := episode.NewService(postgres.NewEpisodeRepository(db))
-	actionSvc := action.NewService(postgres.NewActionRepository(db), episodeSvc)
+	actionRepo := postgres.NewActionRepository(db)
+	actionSvc := action.NewService(actionRepo, episodeSvc)
 	experienceRepo := postgres.NewExperienceRepository(db)
 	relationRepo := postgres.NewRelationRepository(db)
 	patternRepo := postgres.NewPatternRepository(db)
@@ -93,6 +95,8 @@ func run() error {
 		feedback.NewRewardEngine(nil),
 		learning.FeedbackLearner{Inner: learnSvc},
 	).WithActionVerifier(actionSvc)
+
+	snapshotStore := postgres.NewContextSnapshotRepository(db)
 
 	opts := httpserver.Options{
 		Episodes:       episodeSvc,
@@ -153,12 +157,29 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init context service: %w", err)
 		}
-		contextSvc = contextSvc.WithConflicts(experienceSvc)
+		contextSvc = contextSvc.WithConflicts(experienceSvc).WithSnapshots(snapshotStore)
 		if patternRetriever, err := retrieval.NewPatternRetriever(patternRepo, embedder, rankCfg); err != nil {
 			return fmt.Errorf("init pattern retriever: %w", err)
 		} else {
 			contextSvc = contextSvc.WithPatterns(patternRetriever)
 		}
+		actionSvc = actionSvc.WithContexts(action.SnapshotFunc(func(ctx context.Context, tenantID, contextID string) (action.ContextSnapshot, error) {
+			snap, err := contextSvc.GetSnapshot(ctx, tenantID, contextID)
+			if err != nil {
+				if errors.Is(err, contextx.ErrSnapshotNotFound) {
+					return action.ContextSnapshot{}, action.ErrContextNotFound
+				}
+				return action.ContextSnapshot{}, err
+			}
+			return action.ContextSnapshot{
+				ID:            snap.ID,
+				TenantID:      snap.TenantID,
+				EpisodeID:     snap.EpisodeID,
+				ExperienceIDs: snap.ExperienceIDs,
+				PatternIDs:    snap.PatternIDs,
+			}, nil
+		}))
+		opts.Actions = actionSvc
 		opts.StorePipeline = pipeline
 		opts.Retriever = retriever
 		opts.Contexts = contextSvc

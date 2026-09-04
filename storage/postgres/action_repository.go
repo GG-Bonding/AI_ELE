@@ -25,11 +25,11 @@ func (r *ActionRepository) CreateAction(ctx context.Context, a action.AgentActio
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO agent_actions (
 			id, tenant_id, episode_id, sequence, type, tool_name,
-			input, output, status, attempt_id, started_at, completed_at, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			input, output, status, attempt_id, context_id, started_at, completed_at, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 	`,
 		a.ID, a.TenantID, a.EpisodeID, a.Sequence, string(a.Type), a.ToolName,
-		nullableJSON(a.Input), nullableJSON(a.Output), string(a.Status), a.AttemptID,
+		nullableJSON(a.Input), nullableJSON(a.Output), string(a.Status), a.AttemptID, a.ContextID,
 		a.StartedAt, a.CompletedAt, a.CreatedAt,
 	)
 	if err != nil {
@@ -41,7 +41,7 @@ func (r *ActionRepository) CreateAction(ctx context.Context, a action.AgentActio
 func (r *ActionRepository) GetAction(ctx context.Context, tenantID, actionID string) (action.AgentAction, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, episode_id, sequence, type, tool_name,
-		       input, output, status, attempt_id, started_at, completed_at, created_at
+		       input, output, status, attempt_id, context_id, started_at, completed_at, created_at
 		FROM agent_actions
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, actionID)
@@ -58,7 +58,7 @@ func (r *ActionRepository) GetAction(ctx context.Context, tenantID, actionID str
 func (r *ActionRepository) ListActionsByEpisode(ctx context.Context, tenantID, episodeID string) ([]action.AgentAction, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, tenant_id, episode_id, sequence, type, tool_name,
-		       input, output, status, attempt_id, started_at, completed_at, created_at
+		       input, output, status, attempt_id, context_id, started_at, completed_at, created_at
 		FROM agent_actions
 		WHERE tenant_id = $1 AND episode_id = $2
 		ORDER BY sequence ASC, id ASC
@@ -146,13 +146,60 @@ func (r *ActionRepository) ListLinksByAction(ctx context.Context, tenantID, acti
 	return scanLinks(rows)
 }
 
+func (r *ActionRepository) CreatePatternLink(ctx context.Context, link action.PatternActionLink) (action.PatternActionLink, error) {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO pattern_action_links (
+			id, tenant_id, episode_id, pattern_id, action_id, influence, evidence, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	`,
+		link.ID, link.TenantID, link.EpisodeID, link.PatternID, link.ActionID,
+		link.Influence, link.Evidence, link.CreatedAt,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return action.PatternActionLink{}, action.ErrDuplicatePatternLink
+		}
+		return action.PatternActionLink{}, fmt.Errorf("insert pattern action link: %w", err)
+	}
+	return link, nil
+}
+
+func (r *ActionRepository) ListPatternLinksByEpisode(ctx context.Context, tenantID, episodeID string) ([]action.PatternActionLink, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, episode_id, pattern_id, action_id, influence, evidence, created_at
+		FROM pattern_action_links
+		WHERE tenant_id = $1 AND episode_id = $2
+		ORDER BY created_at ASC, id ASC
+	`, tenantID, episodeID)
+	if err != nil {
+		return nil, fmt.Errorf("query pattern action links: %w", err)
+	}
+	defer rows.Close()
+	return scanPatternLinks(rows)
+}
+
+func (r *ActionRepository) ListPatternLinksByAction(ctx context.Context, tenantID, actionID string) ([]action.PatternActionLink, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, episode_id, pattern_id, action_id, influence, evidence, created_at
+		FROM pattern_action_links
+		WHERE tenant_id = $1 AND action_id = $2
+		ORDER BY created_at ASC, id ASC
+	`, tenantID, actionID)
+	if err != nil {
+		return nil, fmt.Errorf("query pattern action links by action: %w", err)
+	}
+	defer rows.Close()
+	return scanPatternLinks(rows)
+}
+
 func scanAction(row interface{ Scan(dest ...any) error }) (action.AgentAction, error) {
 	var a action.AgentAction
 	var typ, status string
 	var input, output []byte
 	if err := row.Scan(
 		&a.ID, &a.TenantID, &a.EpisodeID, &a.Sequence, &typ, &a.ToolName,
-		&input, &output, &status, &a.AttemptID, &a.StartedAt, &a.CompletedAt, &a.CreatedAt,
+		&input, &output, &status, &a.AttemptID, &a.ContextID, &a.StartedAt, &a.CompletedAt, &a.CreatedAt,
 	); err != nil {
 		return action.AgentAction{}, err
 	}
@@ -183,6 +230,24 @@ func scanLinks(rows *sql.Rows) ([]action.ExperienceActionLink, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate experience action links: %w", err)
+	}
+	return out, nil
+}
+
+func scanPatternLinks(rows *sql.Rows) ([]action.PatternActionLink, error) {
+	var out []action.PatternActionLink
+	for rows.Next() {
+		var link action.PatternActionLink
+		if err := rows.Scan(
+			&link.ID, &link.TenantID, &link.EpisodeID, &link.PatternID, &link.ActionID,
+			&link.Influence, &link.Evidence, &link.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan pattern action link: %w", err)
+		}
+		out = append(out, link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pattern action links: %w", err)
 	}
 	return out, nil
 }

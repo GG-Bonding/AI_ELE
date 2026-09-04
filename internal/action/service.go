@@ -2,8 +2,8 @@ package action
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +15,7 @@ import (
 type Service struct {
 	repo     Repository
 	episodes EpisodeChecker
+	contexts ContextLookup // optional; V2.2-2 provenance auto-link
 	now      func() time.Time
 	id       func() string
 }
@@ -29,6 +30,12 @@ func NewService(repo Repository, episodes EpisodeChecker) *Service {
 	}
 }
 
+// WithContexts enables automatic Experience/Pattern→Action links from a context snapshot (V2.2-2).
+func (s *Service) WithContexts(lookup ContextLookup) *Service {
+	s.contexts = lookup
+	return s
+}
+
 // RecordInput records one agent action under an episode.
 type RecordInput struct {
 	TenantID  string
@@ -39,7 +46,8 @@ type RecordInput struct {
 	Output    json.RawMessage
 	Status    Status
 	AttemptID string
-	Sequence  int // optional; 0 means auto-assign next
+	Sequence  int    // optional; 0 means auto-assign next
+	ContextID string // optional; V2.2-2 auto provenance from context snapshot
 }
 
 // LinkInput asserts that an experience influenced an action.
@@ -79,6 +87,24 @@ func (s *Service) RecordAction(ctx context.Context, in RecordInput) (AgentAction
 		return AgentAction{}, fmt.Errorf("%w: episode %s", ErrEpisodeNotFound, in.EpisodeID)
 	}
 
+	contextID := strings.TrimSpace(in.ContextID)
+	var snap ContextSnapshot
+	if contextID != "" {
+		if s.contexts == nil {
+			return AgentAction{}, fmt.Errorf("%w: context provenance not configured", ErrInvalidInput)
+		}
+		snap, err = s.contexts.GetSnapshot(ctx, in.TenantID, contextID)
+		if err != nil {
+			if errors.Is(err, ErrContextNotFound) {
+				return AgentAction{}, err
+			}
+			return AgentAction{}, fmt.Errorf("%w: %v", ErrContextNotFound, err)
+		}
+		if snap.EpisodeID != "" && snap.EpisodeID != strings.TrimSpace(in.EpisodeID) {
+			return AgentAction{}, fmt.Errorf("%w: context %s belongs to episode %s", ErrInvalidInput, contextID, snap.EpisodeID)
+		}
+	}
+
 	seq := in.Sequence
 	if seq <= 0 {
 		seq, err = s.repo.NextActionSequence(ctx, in.TenantID, in.EpisodeID)
@@ -99,6 +125,7 @@ func (s *Service) RecordAction(ctx context.Context, in RecordInput) (AgentAction
 		Output:    cloneJSON(in.Output),
 		Status:    in.Status,
 		AttemptID: strings.TrimSpace(in.AttemptID),
+		ContextID: contextID,
 		StartedAt: now,
 		CreatedAt: now,
 	}
@@ -111,7 +138,56 @@ func (s *Service) RecordAction(ctx context.Context, in RecordInput) (AgentAction
 	if err != nil {
 		return AgentAction{}, fmt.Errorf("create action for episode %s: %w", in.EpisodeID, err)
 	}
+
+	if contextID != "" {
+		if err := s.bindContextProvenance(ctx, created, snap); err != nil {
+			return AgentAction{}, err
+		}
+	}
 	return created, nil
+}
+
+func (s *Service) bindContextProvenance(ctx context.Context, a AgentAction, snap ContextSnapshot) error {
+	evidence := "context:" + a.ContextID
+	for _, expID := range snap.ExperienceIDs {
+		expID = strings.TrimSpace(expID)
+		if expID == "" {
+			continue
+		}
+		_, err := s.repo.CreateLink(ctx, ExperienceActionLink{
+			ID:           s.id(),
+			TenantID:     a.TenantID,
+			EpisodeID:    a.EpisodeID,
+			ExperienceID: expID,
+			ActionID:     a.ID,
+			Influence:    1.0,
+			Evidence:     evidence,
+			CreatedAt:    s.now(),
+		})
+		if err != nil && !errors.Is(err, ErrDuplicateLink) {
+			return fmt.Errorf("auto-link experience %s to action %s: %w", expID, a.ID, err)
+		}
+	}
+	for _, patID := range snap.PatternIDs {
+		patID = strings.TrimSpace(patID)
+		if patID == "" {
+			continue
+		}
+		_, err := s.repo.CreatePatternLink(ctx, PatternActionLink{
+			ID:        s.id(),
+			TenantID:  a.TenantID,
+			EpisodeID: a.EpisodeID,
+			PatternID: patID,
+			ActionID:  a.ID,
+			Influence: 1.0,
+			Evidence:  evidence,
+			CreatedAt: s.now(),
+		})
+		if err != nil && !errors.Is(err, ErrDuplicatePatternLink) {
+			return fmt.Errorf("auto-link pattern %s to action %s: %w", patID, a.ID, err)
+		}
+	}
+	return nil
 }
 
 // LinkExperience records that an experience influenced an action in this episode.
@@ -188,6 +264,21 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, episodeID string) ([]
 		return nil, fmt.Errorf("%w: episode %s", ErrEpisodeNotFound, episodeID)
 	}
 	return s.repo.ListLinksByEpisode(ctx, tenantID, episodeID)
+}
+
+// ListPatternLinks returns pattern→action links for an episode (V2.2-2).
+func (s *Service) ListPatternLinks(ctx context.Context, tenantID, episodeID string) ([]PatternActionLink, error) {
+	if err := requireNonEmpty("tenant_id", tenantID, "episode_id", episodeID); err != nil {
+		return nil, err
+	}
+	exists, err := s.episodes.EpisodeExists(ctx, tenantID, episodeID)
+	if err != nil {
+		return nil, fmt.Errorf("check episode %s: %w", episodeID, err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("%w: episode %s", ErrEpisodeNotFound, episodeID)
+	}
+	return s.repo.ListPatternLinksByEpisode(ctx, tenantID, episodeID)
 }
 
 // GetAction returns one action by id.
