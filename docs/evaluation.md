@@ -60,3 +60,25 @@ V2 task success        > V1 task success
 V2 negative-transfer   < V1 negative-transfer
 V2 post-conflict probe ≈ 1.0 after SUPERSEDES
 ```
+
+## V2.2-7 Learned PATH Recovery Benchmark
+
+Empty-store sequential benchmark: learn E1 under Env V1 (lenient Jira), then Env V2 shock forces recovery and E2 CONFLICT/SUPERSEDES — **no** seed + pre-run `ResolveConflict`.
+
+```text
+cold_start → train_v1 → probe_v1 → shock_v2 → recover_v2 → probe_v2
+```
+
+```bash
+go test ./internal/eval/ -run TestLearnedPATHRecoveryAfterEnvShift -v
+```
+
+Expected shape:
+
+```text
+FGT              > 0     (probe_v1 beats cold_start)
+NegativeTransfer > 0     (stale E1 fails under Env V2)
+RecoveryTime     in (0,6]
+E2 ACTIVE / E1 DEPRECATED (or supersession recorded)
+probe_v2 success = 1.0
+```
