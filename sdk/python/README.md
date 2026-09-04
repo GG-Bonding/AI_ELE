@@ -1,6 +1,6 @@
 # Python SDK
 
-Thin client for the Agent Experience Learning Engine HTTP API.
+Thin client for the Agent Experience Learning Engine HTTP API (V1 + V2 surfaces).
 
 ```bash
 cd sdk/python
@@ -8,7 +8,7 @@ pip install -e .
 ```
 
 ```python
-from agent_experience import ExperienceClient
+from agent_experience import ExperienceClient, target_action_field
 
 client = ExperienceClient(
     base_url="http://localhost:8080",
@@ -18,11 +18,20 @@ client = ExperienceClient(
 )
 
 episode = client.start_episode(goal="Create Jira issue")
-episode.add_attempt(action="create_issue", tool_name="jira.create_issue", status="FAILED")
-episode.complete(status="SUCCESS", verified=True, verifier="tool")
-
-context = client.get_context(task="Create a Jira issue", episode_id=episode.id, tools=["jira"])
-client.feedback(episode_id=episode.id, source="business", reward=1.0, confidence=1.0)
+ctx = episode.get_context(task="Create a Jira issue", tools=["jira"])
+action = episode.tool_call(
+    tool="jira.create_issue",
+    input={"project": "PAY", "priority": "High"},
+    status="SUCCESS",
+    context_id=ctx.get("context_id", ""),
+)
+episode.feedback(
+    source="human",
+    reward=-1.0,
+    confidence=1.0,
+    target=target_action_field(action["id"], "priority"),
+)
+client.evolve_patterns()
 ```
 
 See `examples/jira_loop.py`.

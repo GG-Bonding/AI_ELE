@@ -67,7 +67,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._write_json(
                 200,
                 {
+                    "context_id": "ctx1",
                     "disclaimer": "untrusted",
+                    "patterns": [
+                        {
+                            "id": "pat1",
+                            "type": "PROCEDURAL",
+                            "content": "resolve key first",
+                            "utility": 0.8,
+                            "confidence": 0.9,
+                        }
+                    ],
                     "experiences": [
                         {
                             "type": "PROCEDURAL",
@@ -80,11 +90,27 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/v1/episodes/ep1/actions":
+            assert body.get("context_id") == "ctx1"
+            self._write_json(
+                201,
+                {
+                    "id": "act1",
+                    "episode_id": "ep1",
+                    "tool_name": body["tool_name"],
+                    "status": body["status"],
+                    "context_id": "ctx1",
+                },
+            )
+            return
         if path == "/api/v1/feedback":
             self._write_json(
                 201,
                 {"feedback": {"id": "fb1"}, "episode_reward": {"weighted_reward": 1.0}},
             )
+            return
+        if path == "/api/v1/patterns/evolve":
+            self._write_json(201, {"created": [], "skipped": 0})
             return
         self._write_json(404, {"error": "not found"})
 
@@ -120,6 +146,31 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(len(ctx["experiences"]), 1)
         fb = client.feedback(episode_id=episode.id, source="business", reward=1.0, confidence=1.0)
         self.assertIn("feedback", fb)
+
+    def test_v2_tracing_and_targets(self) -> None:
+        from agent_experience import target_action_field
+
+        client = ExperienceClient(base_url=self.base, tenant_id="tenant_a", agent_id="a", user_id="u")
+        episode = client.start_episode(goal="create jira")
+        ctx = episode.get_context(task="create PAY jira issue", tools=["jira"])
+        self.assertEqual(ctx["context_id"], "ctx1")
+        self.assertEqual(len(ctx["patterns"]), 1)
+        action = episode.tool_call(
+            tool="jira.create_issue",
+            input={"project": "PAY"},
+            status="SUCCESS",
+            context_id=ctx["context_id"],
+        )
+        self.assertEqual(action["id"], "act1")
+        fb = episode.feedback(
+            source="human",
+            reward=-1.0,
+            confidence=1.0,
+            target=target_action_field(action["id"], "priority"),
+        )
+        self.assertIn("feedback", fb)
+        evolved = client.evolve_patterns()
+        self.assertIn("created", evolved)
 
     def test_api_error(self) -> None:
         client = ExperienceClient(base_url=self.base, tenant_id="t")

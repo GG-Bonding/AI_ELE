@@ -13,6 +13,16 @@ type ContextItem struct {
 	Confidence float64 `json:"confidence"`
 }
 
+// ContextPattern is one pattern placed into agent context (V2).
+type ContextPattern struct {
+	ID         string  `json:"id"`
+	Type       string  `json:"type"`
+	Content    string  `json:"content"`
+	Utility    float64 `json:"utility"`
+	Confidence float64 `json:"confidence"`
+	FinalScore float64 `json:"final_score,omitempty"`
+}
+
 // SelectionDecision is a selector decision for diagnostics.
 type SelectionDecision struct {
 	ExperienceID string  `json:"experience_id"`
@@ -23,7 +33,9 @@ type SelectionDecision struct {
 
 // ContextPayload is the safe context returned to an agent.
 type ContextPayload struct {
+	ContextID   string              `json:"context_id,omitempty"`
 	Disclaimer  string              `json:"disclaimer"`
+	Patterns    []ContextPattern    `json:"patterns,omitempty"`
 	Experiences []ContextItem       `json:"experiences"`
 	Selections  []SelectionDecision `json:"selections"`
 }
@@ -37,6 +49,7 @@ type GetContextInput struct {
 	Task           string
 	Tools          []string
 	MaxExperiences int
+	MaxPatterns    int
 	MaxTokens      int
 	TopK           int
 }
@@ -60,6 +73,7 @@ func (c *Client) GetContext(ctx context.Context, in GetContextInput) (ContextPay
 		"task":            in.Task,
 		"tools":           in.Tools,
 		"max_experiences": in.MaxExperiences,
+		"max_patterns":    in.MaxPatterns,
 		"max_tokens":      in.MaxTokens,
 		"top_k":           in.TopK,
 	}
@@ -77,7 +91,10 @@ type FeedbackInput struct {
 	Reward     *float64
 	Confidence float64
 	Evidence   string
-	Target     map[string]any
+	// Target is the structured V2 feedback target (preferred).
+	Target *FeedbackTarget
+	// TargetMap is a legacy map form kept for callers that build targets by hand.
+	TargetMap map[string]any
 }
 
 // FeedbackResult is returned after submitting feedback.
@@ -98,7 +115,11 @@ func (c *Client) Feedback(ctx context.Context, in FeedbackInput) (FeedbackResult
 		"reward":     in.Reward,
 		"confidence": in.Confidence,
 		"evidence":   in.Evidence,
-		"target":     in.Target,
+	}
+	if in.Target != nil {
+		body["target"] = in.Target
+	} else if in.TargetMap != nil {
+		body["target"] = in.TargetMap
 	}
 	var out FeedbackResult
 	err := c.doJSON(ctx, "POST", "/api/v1/feedback", nil, body, &out)

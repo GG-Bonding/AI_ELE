@@ -108,6 +108,7 @@ class ExperienceClient:
         episode_id: str = "",
         tools: Optional[list[str]] = None,
         max_experiences: int = 0,
+        max_patterns: int = 0,
         max_tokens: int = 0,
         top_k: int = 0,
     ) -> dict[str, Any]:
@@ -122,6 +123,7 @@ class ExperienceClient:
                 "task": task,
                 "tools": tools or [],
                 "max_experiences": max_experiences,
+                "max_patterns": max_patterns,
                 "max_tokens": max_tokens,
                 "top_k": top_k,
             },
@@ -137,20 +139,20 @@ class ExperienceClient:
         reward: Optional[float] = None,
         confidence: float = 0.0,
         evidence: str = "",
+        target: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/api/v1/feedback",
-            body={
-                "tenant_id": self._resolve_tenant(tenant_id),
-                "episode_id": episode_id,
-                "source": source,
-                "signal": signal,
-                "reward": reward,
-                "confidence": confidence,
-                "evidence": evidence,
-            },
-        )
+        body: dict[str, Any] = {
+            "tenant_id": self._resolve_tenant(tenant_id),
+            "episode_id": episode_id,
+            "source": source,
+            "signal": signal,
+            "reward": reward,
+            "confidence": confidence,
+            "evidence": evidence,
+        }
+        if target is not None:
+            body["target"] = target
+        return self._request("POST", "/api/v1/feedback", body=body)
 
     def search_experiences(
         self,
@@ -181,6 +183,83 @@ class ExperienceClient:
                 "replacement_id": replacement_id,
             },
         )
+
+    def get_pattern(self, pattern_id: str, *, tenant_id: str = "") -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"/api/v1/patterns/{urllib.parse.quote(pattern_id)}",
+            query={"tenant_id": self._resolve_tenant(tenant_id)},
+        )
+
+    def generalize_patterns(self, experience_ids: list[str], *, tenant_id: str = "") -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/v1/patterns/generalize",
+            body={
+                "tenant_id": self._resolve_tenant(tenant_id),
+                "experience_ids": experience_ids,
+            },
+        )
+
+    def evolve_patterns(self, *, tenant_id: str = "", min_utility: float = 0.0) -> dict[str, Any]:
+        body: dict[str, Any] = {"tenant_id": self._resolve_tenant(tenant_id)}
+        if min_utility:
+            body["min_utility"] = min_utility
+        return self._request("POST", "/api/v1/patterns/evolve", body=body)
+
+    def apply_pattern_reward(
+        self,
+        pattern_id: str,
+        *,
+        reward: float,
+        confidence: float = 1.0,
+        idempotency_key: str = "",
+        tenant_id: str = "",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/v1/patterns/{urllib.parse.quote(pattern_id)}/reward",
+            body={
+                "tenant_id": self._resolve_tenant(tenant_id),
+                "reward": reward,
+                "confidence": confidence,
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    def propose_skill(self, pattern_id: str, *, tenant_id: str = "") -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/v1/patterns/{urllib.parse.quote(pattern_id)}/skill",
+            body={"tenant_id": self._resolve_tenant(tenant_id)},
+        )
+
+    def get_skill(self, skill_id: str, *, tenant_id: str = "") -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"/api/v1/skills/{urllib.parse.quote(skill_id)}",
+            query={"tenant_id": self._resolve_tenant(tenant_id)},
+        )
+
+
+def target_episode() -> dict[str, str]:
+    return {"type": "EPISODE"}
+
+
+def target_action(action_id: str) -> dict[str, str]:
+    return {"type": "ACTION", "action_id": action_id}
+
+
+def target_action_field(action_id: str, field: str) -> dict[str, str]:
+    return {"type": "ACTION_FIELD", "action_id": action_id, "field": field}
+
+
+def target_tool(tool_name: str) -> dict[str, str]:
+    return {"type": "TOOL", "tool_name": tool_name}
+
+
+def target_experience(experience_id: str) -> dict[str, str]:
+    return {"type": "EXPERIENCE", "experience_id": experience_id}
 
 
 @dataclass
@@ -246,4 +325,81 @@ class Episode:
                 "verifier": verifier,
                 "metrics": metrics or {},
             },
+        )
+
+    def get_context(self, *, task: str, tools: Optional[list[str]] = None, **kwargs: Any) -> dict[str, Any]:
+        return self.client.get_context(
+            task=task,
+            tenant_id=self.tenant_id,
+            episode_id=self.id,
+            tools=tools,
+            **kwargs,
+        )
+
+    def record_action(
+        self,
+        *,
+        tool_name: str = "",
+        status: str = "",
+        type: str = "TOOL_CALL",
+        input: Any = None,
+        output: Any = None,
+        context_id: str = "",
+        attempt_id: str = "",
+        sequence: int = 0,
+    ) -> dict[str, Any]:
+        return self.client._request(
+            "POST",
+            f"/api/v1/episodes/{urllib.parse.quote(self.id)}/actions",
+            body={
+                "tenant_id": self.tenant_id,
+                "type": type,
+                "tool_name": tool_name,
+                "input": input,
+                "output": output,
+                "status": status,
+                "attempt_id": attempt_id,
+                "sequence": sequence,
+                "context_id": context_id,
+            },
+        )
+
+    def tool_call(
+        self,
+        *,
+        tool: str,
+        input: Any = None,
+        status: str = "SUCCESS",
+        context_id: str = "",
+    ) -> dict[str, Any]:
+        return self.record_action(tool_name=tool, input=input, status=status, context_id=context_id)
+
+    def link_experience(
+        self,
+        action_id: str,
+        experience_id: str,
+        *,
+        influence: Optional[float] = None,
+        affected_fields: Optional[list[str]] = None,
+        evidence: str = "",
+    ) -> dict[str, Any]:
+        return self.client._request(
+            "POST",
+            f"/api/v1/episodes/{urllib.parse.quote(self.id)}/actions/{urllib.parse.quote(action_id)}/links",
+            body={
+                "tenant_id": self.tenant_id,
+                "experience_id": experience_id,
+                "influence": influence,
+                "affected_fields": affected_fields or [],
+                "evidence": evidence,
+            },
+        )
+
+    def feedback(self, *, source: str, reward: Optional[float] = None, **kwargs: Any) -> dict[str, Any]:
+        return self.client.feedback(
+            episode_id=self.id,
+            tenant_id=self.tenant_id,
+            source=source,
+            reward=reward,
+            **kwargs,
         )

@@ -1,6 +1,6 @@
 # Go SDK
 
-Thin client for the Agent Experience Learning Engine HTTP API.
+Thin client for the Agent Experience Learning Engine HTTP API (V1 + V2 surfaces).
 
 ```go
 import experienceclient "github.com/agent-experience-engine/agent-experience-engine/sdk/go"
@@ -14,19 +14,17 @@ client, _ := experienceclient.New("http://localhost:8080",
 handle, _, _ := client.StartEpisode(ctx, experienceclient.StartEpisodeInput{
     Goal: "Create Jira issue",
 })
-_ = handle.AddAttempt(ctx, experienceclient.AddAttemptInput{Status: "FAILED"})
-_, _ = handle.Complete(ctx, experienceclient.CompleteInput{Status: "SUCCESS"})
-
-payload, _ := client.GetContext(ctx, experienceclient.GetContextInput{
-    EpisodeID: handle.ID,
-    Task:      "Create a Jira issue",
-    Tools:     []string{"jira"},
+ctxPayload, _ := handle.GetContext(ctx, experienceclient.GetContextInput{
+    Task: "Create a Jira issue", Tools: []string{"jira"},
 })
-reward := 1.0
-_, _ = client.Feedback(ctx, experienceclient.FeedbackInput{
-    EpisodeID: handle.ID, Source: "business", Reward: &reward, Confidence: 1,
+call, _ := handle.ToolCall(ctx, ctxPayload.ContextID, "jira.create_issue",
+    map[string]any{"project": "PAY", "priority": "High"}, "SUCCESS")
+reward := -1.0
+_, _ = handle.Feedback(ctx, experienceclient.FeedbackInput{
+    Source: "human", Reward: &reward, Confidence: 1,
+    Target: call.Field("priority"),
 })
-_ = payload
+_, _ = client.EvolvePatterns(ctx, "")
 ```
 
 Runnable example:
