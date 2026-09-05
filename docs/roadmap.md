@@ -127,8 +127,8 @@ Full DoD and architecture: [docs/v2.md](v2.md).
 | Phase | Status |
 | --- | --- |
 | V3-0 V2 freeze + `skill_runtime` gate | ✅ landed |
-| V3-1 SkillSpec + SkillVersion | next |
-| V3-2 Skill Validator | planned |
+| V3-1 SkillSpec + SkillVersion | ✅ landed |
+| V3-2 Skill Validator | next |
 | V3-3 Registry + Version lifecycle | planned |
 | V3-4 Shadow Runtime | planned |
 | V3-5 Skill Retrieval + Selection | planned |

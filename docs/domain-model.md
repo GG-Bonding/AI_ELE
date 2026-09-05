@@ -102,6 +102,17 @@ Executable-looking blueprint derived from a Pattern. Status stays `CANDIDATE` in
 
 HTTP: `POST /api/v1/patterns/{id}/skill`.
 
+### Skill + SkillVersion (V3-1)
+
+Executable assets (gated by `skill_runtime.enabled`). Distinct from V2 `SkillCandidate`:
+
+| Entity | Role |
+| --- | --- |
+| `Skill` | Logical name/status + optional `active_version_id` |
+| `SkillVersion` | Immutable Spec IR + `spec_hash` + validation/lifecycle status |
+
+Spec is a declarative tool workflow (`inputs` / `steps[].tool` / `outputs` / `risk`). YAML is serialization only — Runtime consumes normalized Spec.
+
 ### Semantic Dedup (V2-4)
 
 Store path: exact fingerprint (within episode) → semantic neighbors (same type/scope) → `DedupJudge`.
