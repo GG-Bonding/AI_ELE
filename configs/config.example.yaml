@@ -43,3 +43,7 @@ retrieval:
     FAILURE: 0.04
     CONSTRAINT: 0.01
     PREFERENCE: 0.02
+
+# V3 executable Skill runtime (Shadow/Live). Default off — V2 contracts unchanged.
+skill_runtime:
+  enabled: false

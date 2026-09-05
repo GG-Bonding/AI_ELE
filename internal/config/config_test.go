@@ -72,6 +72,47 @@ log:
 	}
 }
 
+func TestSkillRuntimeDefaultsDisabled(t *testing.T) {
+	t.Parallel()
+
+	path := writeTempConfig(t, `
+database:
+  url: "postgres://aee:aee@localhost:5432/aee?sslmode=disable"
+log:
+  level: info
+  format: json
+`)
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SkillRuntime.Enabled {
+		t.Fatal("skill_runtime.enabled must default to false")
+	}
+}
+
+func TestSkillRuntimeEnvOverride(t *testing.T) {
+	path := writeTempConfig(t, `
+database:
+  url: "postgres://aee:aee@localhost:5432/aee?sslmode=disable"
+log:
+  level: info
+  format: json
+skill_runtime:
+  enabled: false
+`)
+	t.Setenv("AEE_SKILL_RUNTIME_ENABLED", "true")
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.SkillRuntime.Enabled {
+		t.Fatal("expected AEE_SKILL_RUNTIME_ENABLED to enable skill runtime")
+	}
+}
+
 func writeTempConfig(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()

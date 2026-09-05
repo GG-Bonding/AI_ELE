@@ -16,8 +16,9 @@ type Config struct {
 	Log       LogConfig       `yaml:"log"`
 	LLM       LLMConfig       `yaml:"llm"`
 	Embedding EmbeddingConfig `yaml:"embedding"`
-	Evaluator EvaluatorConfig `yaml:"evaluator"`
-	Retrieval RetrievalConfig `yaml:"retrieval"`
+	Evaluator    EvaluatorConfig    `yaml:"evaluator"`
+	Retrieval    RetrievalConfig    `yaml:"retrieval"`
+	SkillRuntime SkillRuntimeConfig `yaml:"skill_runtime"`
 }
 
 type ServerConfig struct {
@@ -69,6 +70,12 @@ type RetrievalConfig struct {
 	DefaultLambda   float64            `yaml:"default_lambda"`
 	ToolScopeLambda float64            `yaml:"tool_scope_lambda"`
 	TypeLambda      map[string]float64 `yaml:"type_lambda"`
+}
+
+// SkillRuntimeConfig gates V3 executable Skill paths (default off).
+// When disabled, V2 SkillCandidate propose/get continue; no Shadow/Live execution.
+type SkillRuntimeConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // Load reads YAML from path and applies environment overrides.
@@ -182,6 +189,9 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("AEE_EMBEDDING_MODEL"); v != "" {
 		c.Embedding.Model = v
+	}
+	if v := os.Getenv("AEE_SKILL_RUNTIME_ENABLED"); v != "" {
+		c.SkillRuntime.Enabled = v == "1" || strings.EqualFold(v, "true")
 	}
 }
 

@@ -236,6 +236,12 @@ func run() error {
 	go evoProc.RunLoop(workerCtx, evolutionjob.DefaultSweepInterval)
 	logger.Info("evolution worker enabled", "interval", evolutionjob.DefaultSweepInterval.String())
 
+	if cfg.SkillRuntime.Enabled {
+		logger.Info("skill runtime feature gate enabled (V3)")
+	} else {
+		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")
+	}
+
 	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, opts)
 	httpServer := &http.Server{
 		Addr:         cfg.Server.Addr,
