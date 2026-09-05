@@ -47,3 +47,8 @@ retrieval:
 # V3 executable Skill runtime (Shadow/Live). Default off — V2 contracts unchanged.
 skill_runtime:
   enabled: false
+  shadow_min_executions: 5
+  shadow_min_success_rate: 0.90
+  suspend_window: 10
+  suspend_max_failure_rate: 0.30
+  allow_medium_risk_live: false

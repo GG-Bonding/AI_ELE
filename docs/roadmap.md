@@ -129,13 +129,13 @@ Full DoD and architecture: [docs/v2.md](v2.md).
 | V3-0 V2 freeze + `skill_runtime` gate | ✅ landed |
 | V3-1 SkillSpec + SkillVersion | ✅ landed |
 | V3-2 Skill Validator + Tool Registry | ✅ landed |
-| V3-3 Registry + Version lifecycle | next |
-| V3-4 Shadow Runtime | planned |
-| V3-5 Skill Retrieval + Selection | planned |
-| V3-6 Controlled Live Execution | planned |
-| V3-7 Skill Learning | planned |
-| V3-8 Skill Evolution | planned |
-| V3-9 Counterfactual Attribution | planned |
-| V3-10 Skill vs Pattern benchmark | planned |
+| V3-3 Registry + Version lifecycle | ✅ landed |
+| V3-4 Shadow Runtime | ✅ landed |
+| V3-5 Skill Retrieval + Selection | ✅ landed |
+| V3-6 Controlled Live Execution + Policy Gate | ✅ landed |
+| V3-7 Skill Learning | ✅ landed |
+| V3-8 Skill Evolution | ✅ landed |
+| V3-9 Counterfactual Attribution | ✅ landed |
+| V3-10 Skill vs Pattern benchmark | ✅ landed |
 
 Full architecture and non-goals: [docs/v3.md](v3.md).

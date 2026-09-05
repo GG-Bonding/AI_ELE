@@ -76,6 +76,12 @@ type RetrievalConfig struct {
 // When disabled, V2 SkillCandidate propose/get continue; no Shadow/Live execution.
 type SkillRuntimeConfig struct {
 	Enabled bool `yaml:"enabled"`
+
+	ShadowMinExecutions   int     `yaml:"shadow_min_executions"`
+	ShadowMinSuccessRate  float64 `yaml:"shadow_min_success_rate"`
+	SuspendWindow         int     `yaml:"suspend_window"`
+	SuspendMaxFailureRate float64 `yaml:"suspend_max_failure_rate"`
+	AllowMediumRiskLive   bool    `yaml:"allow_medium_risk_live"`
 }
 
 // Load reads YAML from path and applies environment overrides.
@@ -153,6 +159,18 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Retrieval.ToolScopeLambda == 0 {
 		c.Retrieval.ToolScopeLambda = 0.05
+	}
+	if c.SkillRuntime.ShadowMinExecutions == 0 {
+		c.SkillRuntime.ShadowMinExecutions = 5
+	}
+	if c.SkillRuntime.ShadowMinSuccessRate == 0 {
+		c.SkillRuntime.ShadowMinSuccessRate = 0.90
+	}
+	if c.SkillRuntime.SuspendWindow == 0 {
+		c.SkillRuntime.SuspendWindow = 10
+	}
+	if c.SkillRuntime.SuspendMaxFailureRate == 0 {
+		c.SkillRuntime.SuspendMaxFailureRate = 0.30
 	}
 }
 

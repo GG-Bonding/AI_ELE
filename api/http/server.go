@@ -16,6 +16,9 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -118,6 +121,11 @@ type Server struct {
 	feedbacks      FeedbackService
 	actions        ActionService
 	patternRewards PatternRewardService
+	skillRegistry  *skill.RegistryService
+	skillRuntime   *skillruntime.Runtime
+	skillRepo      skill.Repository
+	toolRegistry   *toolregistry.Registry
+	skillPromote   skill.PromoteConfig
 	mux            *http.ServeMux
 }
 
@@ -133,6 +141,13 @@ type Options struct {
 	Feedbacks      FeedbackService
 	Actions        ActionService
 	PatternRewards PatternRewardService
+
+	// V3 skill runtime (nil when skill_runtime.enabled=false).
+	SkillRegistry *skill.RegistryService
+	SkillRuntime  *skillruntime.Runtime
+	SkillRepo     skill.Repository
+	ToolRegistry  *toolregistry.Registry
+	SkillPromote  skill.PromoteConfig
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -150,6 +165,11 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		feedbacks:      opts.Feedbacks,
 		actions:        opts.Actions,
 		patternRewards: opts.PatternRewards,
+		skillRegistry:  opts.SkillRegistry,
+		skillRuntime:   opts.SkillRuntime,
+		skillRepo:      opts.SkillRepo,
+		toolRegistry:   opts.ToolRegistry,
+		skillPromote:   opts.SkillPromote,
 		mux:            http.NewServeMux(),
 	}
 	s.routes()
@@ -186,6 +206,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/episodes/{id}/actions", s.handleListActions)
 	s.mux.HandleFunc("POST /api/v1/episodes/{id}/actions/{action_id}/links", s.handleLinkExperienceToAction)
 	s.mux.HandleFunc("GET /api/v1/episodes/{id}/action-links", s.handleListActionLinks)
+
+	// V3 skill runtime (handlers no-op with 503 when not wired).
+	s.mux.HandleFunc("POST /api/v1/skill-runtime/compile", s.handleCompileSkill)
+	s.mux.HandleFunc("POST /api/v1/skill-runtime/execute", s.handleExecuteSkill)
+	s.mux.HandleFunc("POST /api/v1/skill-runtime/retrieve", s.handleRetrieveSkills)
+	s.mux.HandleFunc("POST /api/v1/skill-versions/{version_id}/shadow", s.handleShadowSkillVersion)
+	s.mux.HandleFunc("POST /api/v1/skill-versions/{version_id}/activate", s.handleActivateSkillVersion)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

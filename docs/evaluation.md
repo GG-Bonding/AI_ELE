@@ -82,3 +82,20 @@ RecoveryTime     in (0,6]
 E2 ACTIVE / E1 DEPRECATED (or supersession recorded)
 probe_v2 success = 1.0
 ```
+
+## V3-10 Skill vs Pattern Benchmark
+
+Compares naive display-name Pattern tip vs validated Skill runtime under strict Jira sim:
+
+```bash
+go test ./internal/eval/ -run TestSkillBenchmarkBeatsPatternOnly -v
+```
+
+Expected:
+
+```text
+SkillSuccess       > PatternOnlySuccess
+SkillSuccess       = 1.0
+UnsafeSkillRate    = 0
+Activated / ShadowOK = true
+```

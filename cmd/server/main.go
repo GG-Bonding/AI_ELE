@@ -27,6 +27,11 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skillvalidator"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
 
@@ -237,6 +242,26 @@ func run() error {
 	logger.Info("evolution worker enabled", "interval", evolutionjob.DefaultSweepInterval.String())
 
 	if cfg.SkillRuntime.Enabled {
+		tools := toolregistry.Default()
+		skillRepo := postgres.NewSkillAssetRepository(db)
+		execRepo := postgres.NewSkillExecutionRepository(db)
+		validator := skillvalidator.Adapt(skillvalidator.New(tools, skillvalidator.Options{}))
+		opts.SkillRepo = skillRepo
+		opts.ToolRegistry = tools
+		opts.SkillRegistry = &skill.RegistryService{Repo: skillRepo, Validator: validator}
+		opts.SkillRuntime = &skillruntime.Runtime{
+			Tools: tools,
+			Exec:  &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: tools},
+			Policy: skillruntime.DefaultPolicy{AllowMedium: cfg.SkillRuntime.AllowMediumRiskLive},
+			Store: execRepo,
+		}
+		opts.SkillPromote = skill.PromoteConfig{
+			ShadowMinExecutions:   cfg.SkillRuntime.ShadowMinExecutions,
+			ShadowMinSuccessRate:  cfg.SkillRuntime.ShadowMinSuccessRate,
+			SuspendWindow:         cfg.SkillRuntime.SuspendWindow,
+			SuspendMaxFailureRate: cfg.SkillRuntime.SuspendMaxFailureRate,
+		}
+		_ = execRepo
 		logger.Info("skill runtime feature gate enabled (V3)")
 	} else {
 		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")
