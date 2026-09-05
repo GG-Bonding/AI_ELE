@@ -211,6 +211,12 @@ type Version struct {
 
 	Confidence float64 `json:"confidence"`
 	Utility    float64 `json:"utility"`
+	Alpha      float64 `json:"alpha,omitempty"`
+	Beta       float64 `json:"beta,omitempty"`
+	SuccessCount int   `json:"success_count,omitempty"`
+	FailureCount int   `json:"failure_count,omitempty"`
+	ShadowSuccesses int `json:"shadow_successes,omitempty"`
+	ShadowFailures  int `json:"shadow_failures,omitempty"`
 
 	Status           VersionStatus    `json:"status"`
 	ValidationStatus ValidationStatus `json:"validation_status"`
@@ -234,4 +240,7 @@ type Repository interface {
 	GetVersion(ctx context.Context, tenantID, id string) (Version, error)
 	ListVersions(ctx context.Context, tenantID, skillID string) ([]Version, error)
 	GetVersionByNumber(ctx context.Context, tenantID, skillID string, version int64) (Version, error)
+	ListSkills(ctx context.Context, tenantID string, statuses []Status) ([]Skill, error)
+	UpdateVersion(ctx context.Context, ver Version) (Version, error)
+	ListActiveVersions(ctx context.Context, tenantID string) ([]Version, error)
 }

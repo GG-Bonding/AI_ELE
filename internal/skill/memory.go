@@ -188,3 +188,58 @@ func (m *MemoryRepository) GetVersionByNumber(ctx context.Context, tenantID, ski
 	}
 	return m.versions[m.key(tenantID, id)], nil
 }
+
+// ListSkills implements Repository.
+func (m *MemoryRepository) ListSkills(ctx context.Context, tenantID string, statuses []Status) ([]Skill, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	allow := map[Status]struct{}{}
+	for _, s := range statuses {
+		allow[s] = struct{}{}
+	}
+	var out []Skill
+	for _, sk := range m.skills {
+		if sk.TenantID != tenantID {
+			continue
+		}
+		if len(allow) > 0 {
+			if _, ok := allow[sk.Status]; !ok {
+				continue
+			}
+		}
+		out = append(out, sk)
+	}
+	return out, nil
+}
+
+// UpdateVersion implements Repository.
+func (m *MemoryRepository) UpdateVersion(ctx context.Context, ver Version) (Version, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.key(ver.TenantID, ver.ID)
+	if _, ok := m.versions[key]; !ok {
+		return Version{}, ErrNotFound
+	}
+	m.versions[key] = ver
+	return ver, nil
+}
+
+// ListActiveVersions implements Repository.
+func (m *MemoryRepository) ListActiveVersions(ctx context.Context, tenantID string) ([]Version, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Version
+	for _, sk := range m.skills {
+		if sk.TenantID != tenantID || sk.Status != StatusActive || sk.ActiveVersionID == nil {
+			continue
+		}
+		ver, ok := m.versions[m.key(tenantID, *sk.ActiveVersionID)]
+		if ok {
+			out = append(out, ver)
+		}
+	}
+	return out, nil
+}
