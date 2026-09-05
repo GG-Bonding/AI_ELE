@@ -54,6 +54,17 @@ func (m *MemoryLearningStore) CreateLearningEvent(_ context.Context, ev Learning
 	return ev, nil
 }
 
+// GetLearningEvent implements LearningStore.
+func (m *MemoryLearningStore) GetLearningEvent(_ context.Context, tenantID, id string) (LearningEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ev, ok := m.byID[m.key(tenantID, id)]
+	if !ok {
+		return LearningEvent{}, ErrLearningNotFound
+	}
+	return ev, nil
+}
+
 // GetLearningEventByFeedbackVersion implements LearningStore.
 func (m *MemoryLearningStore) GetLearningEventByFeedbackVersion(_ context.Context, tenantID, feedbackID, versionID string) (LearningEvent, error) {
 	m.mu.Lock()

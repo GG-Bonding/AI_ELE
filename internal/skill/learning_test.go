@@ -23,7 +23,7 @@ func TestApplyFeedbackExactlyOnce(t *testing.T) {
 	}
 	beforeUtil := ver.Utility
 
-	if err := skill.ApplyFeedback(ctx, repo, learn, "t", "fb1", ver.ID, "ex1", 1.0, 1.0, 1.0); err != nil {
+	if err := skill.ApplyFeedback(ctx, repo, learn, nil, "t", "fb1", ver.ID, "ex1", 1.0, 1.0, 1.0); err != nil {
 		t.Fatalf("ApplyFeedback: %v", err)
 	}
 	after, err := repo.GetVersion(ctx, "t", ver.ID)
@@ -35,7 +35,7 @@ func TestApplyFeedbackExactlyOnce(t *testing.T) {
 	}
 
 	// Replay must not double-apply.
-	if err := skill.ApplyFeedback(ctx, repo, learn, "t", "fb1", ver.ID, "ex1", 1.0, 1.0, 1.0); err != nil {
+	if err := skill.ApplyFeedback(ctx, repo, learn, nil, "t", "fb1", ver.ID, "ex1", 1.0, 1.0, 1.0); err != nil {
 		t.Fatalf("duplicate: %v", err)
 	}
 	again, err := repo.GetVersion(ctx, "t", ver.ID)
@@ -66,7 +66,7 @@ func TestApplyFeedbackNegativeLowersUtility(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := ver.Utility
-	if err := skill.ApplyFeedback(ctx, repo, learn, "t", "fb-neg", ver.ID, "", -1.0, 1.0, 1.0); err != nil {
+	if err := skill.ApplyFeedback(ctx, repo, learn, nil, "t", "fb-neg", ver.ID, "", -1.0, 1.0, 1.0); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := repo.GetVersion(ctx, "t", ver.ID)

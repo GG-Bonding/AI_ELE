@@ -2,47 +2,64 @@ package skillruntime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 )
 
-// ToolResult is one tool invocation outcome from a ToolExecutor.
+// ToolResult is one tool invocation outcome.
 type ToolResult struct {
 	OK        bool
 	ErrorCode string
 	Output    map[string]any
 }
 
-// ToolExecutor invokes registered tools (real or simulated).
+// ToolExecutor invokes registered tools for LIVE (and READ_ONLY shadow) steps.
 type ToolExecutor interface {
-	Call(ctx context.Context, tool string, input map[string]any, shadow bool) (ToolResult, error)
+	Execute(ctx context.Context, tool string, input map[string]any) (ToolResult, error)
 }
 
+// PreviewExecutor dry-runs side-effect tools for SHADOW mode.
+// Runtime never calls ToolExecutor.Execute for side-effect tools while shadowing.
+type PreviewExecutor interface {
+	Preview(ctx context.Context, tool string, input map[string]any) (ToolResult, error)
+}
+
+// ErrShadowUnsupported means a side-effect tool cannot be safely shadowed.
+var ErrShadowUnsupported = fmt.Errorf("shadow unsupported: tool lacks PreviewExecutor")
+
 // JiraSimExecutor wraps jirasim.Simulator for Skill runs.
-// Side-effect tools are short-circuited in shadow mode (no create/delete).
 type JiraSimExecutor struct {
 	Sim      *jirasim.Simulator
 	Registry *toolregistry.Registry
 }
 
-// Call implements ToolExecutor.
-func (e *JiraSimExecutor) Call(ctx context.Context, tool string, input map[string]any, shadow bool) (ToolResult, error) {
+// Execute implements ToolExecutor (always real sim call — no shadow flag).
+func (e *JiraSimExecutor) Execute(ctx context.Context, tool string, input map[string]any) (ToolResult, error) {
+	_ = ctx
+	return e.call(tool, input)
+}
+
+// Preview implements PreviewExecutor for side-effect tools (no real write).
+func (e *JiraSimExecutor) Preview(ctx context.Context, tool string, input map[string]any) (ToolResult, error) {
 	_ = ctx
 	reg := e.Registry
 	if reg == nil {
 		reg = toolregistry.Default()
 	}
-	if shadow {
-		if def, ok := reg.Get(tool); ok && def.SideEffect {
-			out := map[string]any{"_shadow": true}
-			for k, v := range input {
-				out[k] = v
-			}
-			return ToolResult{OK: true, Output: out}, nil
+	if def, ok := reg.Get(tool); ok && def.SideEffect {
+		out := map[string]any{"_shadow": true}
+		for k, v := range input {
+			out[k] = v
 		}
+		return ToolResult{OK: true, Output: out}, nil
 	}
+	// READ_ONLY tools may preview via Execute semantics.
+	return e.call(tool, input)
+}
 
+func (e *JiraSimExecutor) call(tool string, input map[string]any) (ToolResult, error) {
 	sim := e.Sim
 	if sim == nil {
 		sim = jirasim.New()
@@ -52,14 +69,12 @@ func (e *JiraSimExecutor) Call(ctx context.Context, tool string, input map[strin
 	if out == nil {
 		out = map[string]any{}
 	} else {
-		// Shallow copy so callers can mutate safely.
 		cp := make(map[string]any, len(out)+2)
 		for k, v := range out {
 			cp[k] = v
 		}
 		out = cp
 	}
-	// Promote first search hit to top-level key/name for {{ project.key }} templates.
 	if tool == "jira.search_projects" && res.OK {
 		enrichSearchProject(out)
 	}

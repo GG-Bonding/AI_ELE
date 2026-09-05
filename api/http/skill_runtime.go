@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
-	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 )
 
@@ -20,15 +19,14 @@ type compileSkillRequest struct {
 }
 
 type executeSkillRequest struct {
-	TenantID        string         `json:"tenant_id"`
-	EpisodeID       string         `json:"episode_id"`
-	SkillID         string         `json:"skill_id"`
-	VersionID       string         `json:"version_id"`
-	Mode            string         `json:"mode"`
-	Inputs          map[string]any `json:"inputs"`
-	AvailableTools  []string       `json:"available_tools"`
-	IdempotencyKey  string         `json:"idempotency_key"`
-	ApprovalGranted bool           `json:"approval_granted"`
+	TenantID       string         `json:"tenant_id"`
+	EpisodeID      string         `json:"episode_id"`
+	SkillID        string         `json:"skill_id"`
+	VersionID      string         `json:"version_id"`
+	Mode           string         `json:"mode"`
+	Inputs         map[string]any `json:"inputs"`
+	AvailableTools []string       `json:"available_tools"`
+	IdempotencyKey string         `json:"idempotency_key"`
 }
 
 type retrieveSkillsRequest struct {
@@ -36,6 +34,16 @@ type retrieveSkillsRequest struct {
 	Task     string   `json:"task"`
 	Tools    []string `json:"tools"`
 	TopK     int      `json:"top_k"`
+}
+
+type resumeSkillRequest struct {
+	TenantID       string   `json:"tenant_id"`
+	AvailableTools []string `json:"available_tools"`
+}
+
+type approvalActionRequest struct {
+	TenantID string `json:"tenant_id"`
+	Reason   string `json:"reason"`
 }
 
 func (s *Server) handleCompileSkill(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +102,7 @@ func (s *Server) handleActivateSkillVersion(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
-	if s.skillRuntime == nil || s.skillRepo == nil {
+	if s.skillExec == nil {
 		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
 		return
 	}
@@ -103,30 +111,80 @@ func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	ver, err := s.skillRepo.GetVersion(r.Context(), req.TenantID, req.VersionID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
 	mode := skill.ExecutionMode(strings.ToUpper(strings.TrimSpace(req.Mode)))
 	if mode == "" {
 		mode = skill.ModeShadow
 	}
-	ex, steps, err := s.skillRuntime.Run(r.Context(), skillruntime.RunRequest{
-		TenantID: req.TenantID, EpisodeID: req.EpisodeID,
-		SkillID: req.SkillID, SkillVersionID: req.VersionID,
-		Mode: mode, Spec: ver.Spec, Inputs: req.Inputs,
-		AvailableTools: req.AvailableTools, IdempotencyKey: req.IdempotencyKey,
-		RuntimeEnabled: true, ApprovalGranted: req.ApprovalGranted,
+	ex, steps, err := s.skillExec.Execute(r.Context(), skill.ExecuteInput{
+		TenantID:       req.TenantID,
+		EpisodeID:      req.EpisodeID,
+		SkillID:        req.SkillID,
+		VersionID:      req.VersionID,
+		Mode:           mode,
+		Inputs:         req.Inputs,
+		AvailableTools: req.AvailableTools,
+		IdempotencyKey: req.IdempotencyKey,
+		RuntimeEnabled: true,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if mode == skill.ModeShadow && s.skillRegistry != nil {
-		_, _ = s.skillRegistry.RecordShadowOutcome(r.Context(), req.TenantID, req.VersionID, ex.Status == skill.ExecSucceeded)
+	writeJSON(w, http.StatusOK, map[string]any{"execution": ex, "steps": steps})
+}
+
+func (s *Server) handleResumeSkillExecution(w http.ResponseWriter, r *http.Request) {
+	if s.skillExec == nil {
+		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
+		return
+	}
+	var req resumeSkillRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	ex, steps, err := s.skillExec.Resume(r.Context(), req.TenantID, r.PathValue("execution_id"), req.AvailableTools, true)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"execution": ex, "steps": steps})
+}
+
+func (s *Server) handleApproveSkillApproval(w http.ResponseWriter, r *http.Request) {
+	if s.skillExec == nil {
+		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
+		return
+	}
+	var req approvalActionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	appr, err := s.skillExec.ApproveApproval(r.Context(), req.TenantID, r.PathValue("approval_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, appr)
+}
+
+func (s *Server) handleRejectSkillApproval(w http.ResponseWriter, r *http.Request) {
+	if s.skillExec == nil {
+		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
+		return
+	}
+	var req approvalActionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	appr, err := s.skillExec.RejectApproval(r.Context(), req.TenantID, r.PathValue("approval_id"), req.Reason)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, appr)
 }
 
 func (s *Server) handleRetrieveSkills(w http.ResponseWriter, r *http.Request) {

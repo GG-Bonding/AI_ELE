@@ -45,12 +45,14 @@ func newTestRuntime(t *testing.T) (*skillruntime.Runtime, *skillruntime.MemoryEx
 	t.Helper()
 	store := skillruntime.NewMemoryExecutionStore()
 	reg := toolregistry.Default()
+	exec := &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: reg}
 	var seq int
 	rt := &skillruntime.Runtime{
-		Tools:  reg,
-		Exec:   &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: reg},
-		Policy: skillruntime.DefaultPolicy{},
-		Store:  store,
+		Tools:   reg,
+		Exec:    exec,
+		Preview: exec,
+		Policy:  skillruntime.DefaultPolicy{},
+		Store:   store,
 		IDs: func() string {
 			seq++
 			return fmt.Sprintf("id_%d", seq)
@@ -63,7 +65,7 @@ func newTestRuntime(t *testing.T) (*skillruntime.Runtime, *skillruntime.MemoryEx
 func TestShadowJiraSkillSucceeds(t *testing.T) {
 	t.Parallel()
 	rt, _ := newTestRuntime(t)
-	ex, steps, err := rt.Run(context.Background(), skillruntime.RunRequest{
+	ex, steps, err := rt.Run(context.Background(), skill.ExecutionRunRequest{
 		TenantID:       "t1",
 		SkillID:        "sk1",
 		SkillVersionID: "skv1",
@@ -99,7 +101,7 @@ func TestShadowJiraSkillSucceeds(t *testing.T) {
 func TestLiveDeniedWhenRuntimeDisabled(t *testing.T) {
 	t.Parallel()
 	rt, _ := newTestRuntime(t)
-	ex, steps, err := rt.Run(context.Background(), skillruntime.RunRequest{
+	ex, steps, err := rt.Run(context.Background(), skill.ExecutionRunRequest{
 		TenantID:       "t1",
 		SkillID:        "sk1",
 		SkillVersionID: "skv1",
@@ -120,12 +122,12 @@ func TestLiveDeniedWhenRuntimeDisabled(t *testing.T) {
 	}
 }
 
-func TestHighRiskRequiresApproval(t *testing.T) {
+func TestHighRiskRequiresApprovalThenResume(t *testing.T) {
 	t.Parallel()
 	rt, store := newTestRuntime(t)
 	spec := jiraSafeSpec()
 	spec.Risk = skill.SkillRisk{Level: skill.RiskHigh}
-	ex, steps, err := rt.Run(context.Background(), skillruntime.RunRequest{
+	ex, steps, err := rt.Run(context.Background(), skill.ExecutionRunRequest{
 		TenantID:       "t1",
 		SkillID:        "sk1",
 		SkillVersionID: "skv1",
@@ -144,20 +146,42 @@ func TestHighRiskRequiresApproval(t *testing.T) {
 	if len(steps) != 0 {
 		t.Fatalf("steps=%d", len(steps))
 	}
-	_ = store
+	appr, err := store.GetApprovalByExecution(context.Background(), "t1", ex.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Approve(context.Background(), "t1", appr.ID); err != nil {
+		t.Fatal(err)
+	}
+	ex2, steps2, err := rt.Resume(context.Background(), skill.ResumeRequest{
+		TenantID:       "t1",
+		ExecutionID:    ex.ID,
+		AvailableTools: []string{"jira.search_projects", "jira.create_issue"},
+		RuntimeEnabled: true,
+		Spec:           spec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex2.Status != skill.ExecSucceeded {
+		t.Fatalf("resume status=%s code=%s msg=%s", ex2.Status, ex2.ErrorCode, ex2.ErrorMessage)
+	}
+	if len(steps2) != 2 {
+		t.Fatalf("steps=%d", len(steps2))
+	}
 }
 
 func TestMissingToolDenies(t *testing.T) {
 	t.Parallel()
 	rt, _ := newTestRuntime(t)
-	ex, _, err := rt.Run(context.Background(), skillruntime.RunRequest{
+	ex, _, err := rt.Run(context.Background(), skill.ExecutionRunRequest{
 		TenantID:       "t1",
 		SkillID:        "sk1",
 		SkillVersionID: "skv1",
 		Mode:           skill.ModeShadow,
 		Spec:           jiraSafeSpec(),
 		Inputs:         map[string]any{"project_name": "Payment", "title": "x"},
-		AvailableTools: []string{"jira.search_projects"}, // missing create_issue
+		AvailableTools: []string{"jira.search_projects"},
 		RuntimeEnabled: true,
 	})
 	if err != nil {
@@ -206,7 +230,7 @@ func TestTemplateResolution(t *testing.T) {
 func TestIdempotencyReturnsExisting(t *testing.T) {
 	t.Parallel()
 	rt, _ := newTestRuntime(t)
-	req := skillruntime.RunRequest{
+	req := skill.ExecutionRunRequest{
 		TenantID:       "t1",
 		SkillID:        "sk1",
 		SkillVersionID: "skv1",
@@ -233,32 +257,54 @@ func TestIdempotencyReturnsExisting(t *testing.T) {
 	}
 }
 
-func TestApprovalGrantedRunsLiveHighRisk(t *testing.T) {
+func TestShadowRequiresPreview(t *testing.T) {
+	t.Parallel()
+	store := skillruntime.NewMemoryExecutionStore()
+	reg := toolregistry.Default()
+	rt := &skillruntime.Runtime{
+		Tools:  reg,
+		Exec:   &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: reg},
+		Policy: skillruntime.DefaultPolicy{},
+		Store:  store,
+		// Preview intentionally nil
+	}
+	ex, _, err := rt.Run(context.Background(), skill.ExecutionRunRequest{
+		TenantID: "t1", SkillID: "sk1", SkillVersionID: "skv1",
+		Mode: skill.ModeShadow, Spec: jiraSafeSpec(),
+		Inputs:         map[string]any{"project_name": "Payment", "title": "x"},
+		AvailableTools: []string{"jira.search_projects", "jira.create_issue"},
+		RuntimeEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Status != skill.ExecFailed || ex.ErrorCode != "SHADOW_UNSUPPORTED" {
+		t.Fatalf("status=%s code=%s", ex.Status, ex.ErrorCode)
+	}
+}
+
+func TestWhenSkipAndOnErrorContinue(t *testing.T) {
 	t.Parallel()
 	rt, _ := newTestRuntime(t)
 	spec := jiraSafeSpec()
-	spec.Risk = skill.SkillRisk{Level: skill.RiskHigh}
-	ex, steps, err := rt.Run(context.Background(), skillruntime.RunRequest{
-		TenantID:        "t1",
-		SkillID:         "sk1",
-		SkillVersionID:  "skv1",
-		Mode:            skill.ModeLive,
-		Spec:            spec,
-		Inputs:          map[string]any{"project_name": "Payment", "title": "x"},
-		AvailableTools:  []string{"jira.search_projects", "jira.create_issue"},
-		RuntimeEnabled:  true,
-		ApprovalGranted: true,
+	spec.Steps[0].When = &skill.Condition{Expr: `inputs.project_name == "Other"`}
+	spec.Steps[0].OnError = &skill.ErrorPolicy{Action: "continue"}
+	// First step skipped → create_issue will fail template (no project) — make create continue too
+	spec.Steps[1].OnError = &skill.ErrorPolicy{Action: "continue"}
+	ex, steps, err := rt.Run(context.Background(), skill.ExecutionRunRequest{
+		TenantID: "t1", SkillID: "sk1", SkillVersionID: "skv1",
+		Mode: skill.ModeShadow, Spec: spec,
+		Inputs:         map[string]any{"project_name": "Payment", "title": "x"},
+		AvailableTools: []string{"jira.search_projects", "jira.create_issue"},
+		RuntimeEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ex.Status != skill.ExecSucceeded {
-		t.Fatalf("status=%s code=%s msg=%s", ex.Status, ex.ErrorCode, ex.ErrorMessage)
+		t.Fatalf("status=%s msg=%s", ex.Status, ex.ErrorMessage)
 	}
-	if len(steps) != 2 {
-		t.Fatalf("steps=%d", len(steps))
-	}
-	if steps[1].Status != skill.StepSucceeded {
-		t.Fatalf("create=%s out=%v", steps[1].Status, steps[1].Output)
+	if steps[0].Status != skill.StepSkipped {
+		t.Fatalf("step0=%s", steps[0].Status)
 	}
 }

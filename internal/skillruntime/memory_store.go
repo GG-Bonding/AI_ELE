@@ -61,10 +61,15 @@ func (m *MemoryExecutionStore) CreateExecution(ctx context.Context, ex skill.Exe
 	if ex.Status == "" {
 		ex.Status = skill.ExecPending
 	}
-	m.executions[m.key(ex.TenantID, ex.ID)] = ex
 	if ex.IdempotencyKey != "" {
+		if existingID, ok := m.byIdem[m.key(ex.TenantID, ex.IdempotencyKey)]; ok {
+			if existing, ok := m.executions[m.key(ex.TenantID, existingID)]; ok {
+				return existing, nil
+			}
+		}
 		m.byIdem[m.key(ex.TenantID, ex.IdempotencyKey)] = ex.ID
 	}
+	m.executions[m.key(ex.TenantID, ex.ID)] = ex
 	return ex, nil
 }
 
@@ -182,6 +187,27 @@ func (m *MemoryExecutionStore) GetApproval(ctx context.Context, tenantID, id str
 	return req, nil
 }
 
+// GetApprovalByExecution implements skill.ExecutionStore.
+func (m *MemoryExecutionStore) GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (skill.ApprovalRequest, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest skill.ApprovalRequest
+	found := false
+	for _, req := range m.approvals {
+		if req.TenantID == tenantID && req.ExecutionID == executionID {
+			if !found || req.CreatedAt.After(latest.CreatedAt) {
+				latest = req
+				found = true
+			}
+		}
+	}
+	if !found {
+		return skill.ApprovalRequest{}, skill.ErrNotFound
+	}
+	return latest, nil
+}
+
 // CreateLearningEvent implements skill.LearningStore.
 func (m *MemoryExecutionStore) CreateLearningEvent(ctx context.Context, ev skill.LearningEvent) (skill.LearningEvent, error) {
 	_ = ctx
@@ -192,7 +218,7 @@ func (m *MemoryExecutionStore) CreateLearningEvent(ctx context.Context, ev skill
 	}
 	fbKey := fmt.Sprintf("%s|%s|%s", ev.TenantID, ev.FeedbackID, ev.SkillVersionID)
 	if _, ok := m.byFeedback[fbKey]; ok {
-		return skill.LearningEvent{}, fmt.Errorf("%w: learning event already exists", skill.ErrConflict)
+		return skill.LearningEvent{}, skill.ErrDuplicateLearning
 	}
 	if ev.ID == "" {
 		ev.ID = m.nextID("le")
@@ -208,6 +234,18 @@ func (m *MemoryExecutionStore) CreateLearningEvent(ctx context.Context, ev skill
 	return ev, nil
 }
 
+// GetLearningEvent implements skill.LearningStore.
+func (m *MemoryExecutionStore) GetLearningEvent(ctx context.Context, tenantID, id string) (skill.LearningEvent, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ev, ok := m.learning[m.key(tenantID, id)]
+	if !ok {
+		return skill.LearningEvent{}, skill.ErrLearningNotFound
+	}
+	return ev, nil
+}
+
 // GetLearningEventByFeedbackVersion implements skill.LearningStore.
 func (m *MemoryExecutionStore) GetLearningEventByFeedbackVersion(ctx context.Context, tenantID, feedbackID, versionID string) (skill.LearningEvent, error) {
 	_ = ctx
@@ -215,11 +253,11 @@ func (m *MemoryExecutionStore) GetLearningEventByFeedbackVersion(ctx context.Con
 	defer m.mu.Unlock()
 	id, ok := m.byFeedback[fmt.Sprintf("%s|%s|%s", tenantID, feedbackID, versionID)]
 	if !ok {
-		return skill.LearningEvent{}, skill.ErrNotFound
+		return skill.LearningEvent{}, skill.ErrLearningNotFound
 	}
 	ev, ok := m.learning[m.key(tenantID, id)]
 	if !ok {
-		return skill.LearningEvent{}, skill.ErrNotFound
+		return skill.LearningEvent{}, skill.ErrLearningNotFound
 	}
 	return ev, nil
 }

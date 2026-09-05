@@ -123,6 +123,7 @@ type Server struct {
 	patternRewards PatternRewardService
 	skillRegistry  *skill.RegistryService
 	skillRuntime   *skillruntime.Runtime
+	skillExec      *skill.ExecutionService
 	skillRepo      skill.Repository
 	toolRegistry   *toolregistry.Registry
 	skillPromote   skill.PromoteConfig
@@ -145,6 +146,7 @@ type Options struct {
 	// V3 skill runtime (nil when skill_runtime.enabled=false).
 	SkillRegistry *skill.RegistryService
 	SkillRuntime  *skillruntime.Runtime
+	SkillExec     *skill.ExecutionService
 	SkillRepo     skill.Repository
 	ToolRegistry  *toolregistry.Registry
 	SkillPromote  skill.PromoteConfig
@@ -167,6 +169,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		patternRewards: opts.PatternRewards,
 		skillRegistry:  opts.SkillRegistry,
 		skillRuntime:   opts.SkillRuntime,
+		skillExec:      opts.SkillExec,
 		skillRepo:      opts.SkillRepo,
 		toolRegistry:   opts.ToolRegistry,
 		skillPromote:   opts.SkillPromote,
@@ -213,6 +216,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/skill-runtime/retrieve", s.handleRetrieveSkills)
 	s.mux.HandleFunc("POST /api/v1/skill-versions/{version_id}/shadow", s.handleShadowSkillVersion)
 	s.mux.HandleFunc("POST /api/v1/skill-versions/{version_id}/activate", s.handleActivateSkillVersion)
+	s.mux.HandleFunc("POST /api/v1/skill-approvals/{approval_id}/approve", s.handleApproveSkillApproval)
+	s.mux.HandleFunc("POST /api/v1/skill-approvals/{approval_id}/reject", s.handleRejectSkillApproval)
+	s.mux.HandleFunc("POST /api/v1/skill-executions/{execution_id}/resume", s.handleResumeSkillExecution)
 }
 
 // Handler returns the root HTTP handler (middleware-ready).

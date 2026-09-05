@@ -31,6 +31,8 @@ type PolicyRequest struct {
 	RuntimeEnabled   bool
 	AvailableTools   []string // agent tools
 	SpecTools        []string
+	// ApprovalApproved is true only after a persisted server-side approval (Resume).
+	ApprovalApproved bool
 }
 
 // DefaultPolicy implements the V3 risk / tool gate.
@@ -74,6 +76,9 @@ func (p DefaultPolicy) Decide(ctx context.Context, req PolicyRequest) (Decision,
 		return DecisionDeny, "critical risk cannot auto-execute", nil
 	case skill.RiskHigh:
 		if req.Mode == skill.ModeLive {
+			if req.ApprovalApproved {
+				return DecisionAllow, "", nil
+			}
 			return DecisionRequireApproval, "high risk live requires approval", nil
 		}
 		return DecisionAllow, "", nil
@@ -88,7 +93,7 @@ func (p DefaultPolicy) Decide(ctx context.Context, req PolicyRequest) (Decision,
 		return DecisionDeny, fmt.Sprintf("unknown risk %q", risk), nil
 	}
 
-	if req.RequiresApproval && req.Mode == skill.ModeLive {
+	if req.RequiresApproval && req.Mode == skill.ModeLive && !req.ApprovalApproved {
 		return DecisionRequireApproval, "skill requires approval for live", nil
 	}
 	return DecisionAllow, "", nil

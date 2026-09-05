@@ -119,12 +119,25 @@ type ExecutionStore interface {
 	CreateApproval(ctx context.Context, req ApprovalRequest) (ApprovalRequest, error)
 	UpdateApproval(ctx context.Context, req ApprovalRequest) (ApprovalRequest, error)
 	GetApproval(ctx context.Context, tenantID, id string) (ApprovalRequest, error)
+	GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (ApprovalRequest, error)
 }
 
 // LearningStore persists skill learning events.
 type LearningStore interface {
 	CreateLearningEvent(ctx context.Context, ev LearningEvent) (LearningEvent, error)
+	GetLearningEvent(ctx context.Context, tenantID, id string) (LearningEvent, error)
 	GetLearningEventByFeedbackVersion(ctx context.Context, tenantID, feedbackID, versionID string) (LearningEvent, error)
 	MarkLearningApplied(ctx context.Context, tenantID, id string, at time.Time) error
 	MarkLearningFailed(ctx context.Context, tenantID, id string) error
+}
+
+// LearningApplier atomically applies a PENDING/FAILED skill learning event to utility.
+type LearningApplier interface {
+	ApplyPending(ctx context.Context, tenantID, eventID string) (LearningApplyResult, error)
+}
+
+// LearningApplyResult is the outcome of an atomic skill learning apply.
+type LearningApplyResult struct {
+	Version        Version
+	AlreadyApplied bool
 }
