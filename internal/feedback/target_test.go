@@ -27,6 +27,8 @@ func TestValidateTarget(t *testing.T) {
 		{name: "action field missing field", target: feedback.Target{Type: feedback.TargetActionField, ActionID: "a1"}, wantErr: true},
 		{name: "tool ok", target: feedback.Target{Type: feedback.TargetTool, ToolName: "jira.create_issue"}},
 		{name: "experience ok", target: feedback.Target{Type: feedback.TargetExperience, ExperienceID: "e1"}},
+		{name: "skill execution ok", target: feedback.Target{Type: feedback.TargetSkillExecution, SkillVersionID: "sv1"}},
+		{name: "skill execution missing version", target: feedback.Target{Type: feedback.TargetSkillExecution}, wantErr: true},
 		{name: "bad type", target: feedback.Target{Type: "NOPE"}, wantErr: true},
 	}
 	for _, tc := range cases {

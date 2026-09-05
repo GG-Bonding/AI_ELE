@@ -243,25 +243,38 @@ func run() error {
 
 	if cfg.SkillRuntime.Enabled {
 		tools := toolregistry.Default()
-		skillRepo := postgres.NewSkillAssetRepository(db)
+		skillAssetRepo := postgres.NewSkillAssetRepository(db)
 		execRepo := postgres.NewSkillExecutionRepository(db)
 		validator := skillvalidator.Adapt(skillvalidator.New(tools, skillvalidator.Options{}))
-		opts.SkillRepo = skillRepo
-		opts.ToolRegistry = tools
-		opts.SkillRegistry = &skill.RegistryService{Repo: skillRepo, Validator: validator}
-		opts.SkillRuntime = &skillruntime.Runtime{
-			Tools: tools,
-			Exec:  &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: tools},
-			Policy: skillruntime.DefaultPolicy{AllowMedium: cfg.SkillRuntime.AllowMediumRiskLive},
-			Store: execRepo,
+		jiraExec := &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: tools}
+		rt := &skillruntime.Runtime{
+			Tools:   tools,
+			Exec:    jiraExec,
+			Preview: jiraExec,
+			Policy:  skillruntime.DefaultPolicy{AllowMedium: cfg.SkillRuntime.AllowMediumRiskLive},
+			Store:   execRepo,
 		}
-		opts.SkillPromote = skill.PromoteConfig{
+		registry := &skill.RegistryService{Repo: skillAssetRepo, Validator: validator}
+		promote := skill.PromoteConfig{
 			ShadowMinExecutions:   cfg.SkillRuntime.ShadowMinExecutions,
 			ShadowMinSuccessRate:  cfg.SkillRuntime.ShadowMinSuccessRate,
 			SuspendWindow:         cfg.SkillRuntime.SuspendWindow,
 			SuspendMaxFailureRate: cfg.SkillRuntime.SuspendMaxFailureRate,
 		}
-		_ = execRepo
+		skillApplier := postgres.NewSkillLearningEventApplier(db)
+		learnSvc = learnSvc.WithSkillLearning(skillAssetRepo, execRepo, skillApplier, registry, promote)
+		opts.SkillRepo = skillAssetRepo
+		opts.ToolRegistry = tools
+		opts.SkillRegistry = registry
+		opts.SkillRuntime = rt
+		opts.SkillPromote = promote
+		opts.SkillExec = &skill.ExecutionService{
+			Repo:     skillAssetRepo,
+			Store:    execRepo,
+			Runner:   rt,
+			Registry: registry,
+			Promote:  promote,
+		}
 		logger.Info("skill runtime feature gate enabled (V3)")
 	} else {
 		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")

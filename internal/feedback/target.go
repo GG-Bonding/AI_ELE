@@ -19,12 +19,14 @@ const (
 	TargetTool TargetType = "TOOL"
 	// TargetExperience points at a specific experience id.
 	TargetExperience TargetType = "EXPERIENCE"
+	// TargetSkillExecution points at a V3 skill execution / version.
+	TargetSkillExecution TargetType = "SKILL_EXECUTION"
 )
 
 // Valid reports whether t is a known target type.
 func (t TargetType) Valid() bool {
 	switch t {
-	case TargetEpisode, TargetAction, TargetActionField, TargetTool, TargetExperience:
+	case TargetEpisode, TargetAction, TargetActionField, TargetTool, TargetExperience, TargetSkillExecution:
 		return true
 	default:
 		return false
@@ -36,10 +38,12 @@ func (t TargetType) Valid() bool {
 type Target struct {
 	Type TargetType `json:"type"`
 
-	ActionID     string `json:"action_id,omitempty"`
-	ToolName     string `json:"tool_name,omitempty"`
-	Field        string `json:"field,omitempty"`
-	ExperienceID string `json:"experience_id,omitempty"`
+	ActionID         string `json:"action_id,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
+	Field            string `json:"field,omitempty"`
+	ExperienceID     string `json:"experience_id,omitempty"`
+	SkillVersionID   string `json:"skill_version_id,omitempty"`
+	SkillExecutionID string `json:"skill_execution_id,omitempty"`
 }
 
 // ValidateTarget checks structural rules for a feedback target.
@@ -57,6 +61,8 @@ func ValidateTarget(t *Target) error {
 	t.ToolName = strings.TrimSpace(t.ToolName)
 	t.Field = strings.TrimSpace(t.Field)
 	t.ExperienceID = strings.TrimSpace(t.ExperienceID)
+	t.SkillVersionID = strings.TrimSpace(t.SkillVersionID)
+	t.SkillExecutionID = strings.TrimSpace(t.SkillExecutionID)
 
 	switch typ {
 	case TargetEpisode:
@@ -79,6 +85,10 @@ func ValidateTarget(t *Target) error {
 	case TargetExperience:
 		if t.ExperienceID == "" {
 			return fmt.Errorf("%w: experience_id is required for EXPERIENCE target", ErrInvalidInput)
+		}
+	case TargetSkillExecution:
+		if t.SkillVersionID == "" {
+			return fmt.Errorf("%w: skill_version_id is required for SKILL_EXECUTION target", ErrInvalidInput)
 		}
 	}
 	return nil

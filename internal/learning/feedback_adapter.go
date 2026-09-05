@@ -26,6 +26,7 @@ func (f FeedbackLearner) ApplyFeedbackReward(ctx context.Context, in feedback.Le
 	for _, u := range updates {
 		out = append(out, feedback.UtilityChange{
 			ExperienceID:    u.ExperienceID,
+			SkillVersionID:  u.SkillVersionID,
 			OldUtility:      u.OldUtility,
 			NewUtility:      u.NewUtility,
 			Credit:          u.Credit,

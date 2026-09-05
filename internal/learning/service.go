@@ -12,6 +12,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/google/uuid"
 )
 
@@ -29,6 +30,11 @@ type Service struct {
 	actions        ActionLister                 // optional; tool_name enrichment for TOOL targets
 	patterns       experience.PatternRepository // optional; V2-8 / V2.1 pattern learning
 	evolutionDirty evolutionDirtyMarker         // optional; V2.2-3 mark families for auto evolution
+	skillRepo      skill.Repository             // optional; V3.1 skill learning
+	skillLearning  skill.LearningStore          // optional
+	skillApplier   skill.LearningApplier        // optional
+	skillRegistry  *skill.RegistryService       // optional; auto-suspend
+	skillPromote   skill.PromoteConfig
 	now            func() time.Time
 	id             func() string
 }
@@ -128,6 +134,22 @@ func (s *Service) WithEvolutionDirty(marker evolutionDirtyMarker) *Service {
 	return s
 }
 
+// WithSkillLearning attaches V3 skill utility updates from SKILL_EXECUTION feedback.
+func (s *Service) WithSkillLearning(
+	repo skill.Repository,
+	learning skill.LearningStore,
+	applier skill.LearningApplier,
+	registry *skill.RegistryService,
+	promote skill.PromoteConfig,
+) *Service {
+	s.skillRepo = repo
+	s.skillLearning = learning
+	s.skillApplier = applier
+	s.skillRegistry = registry
+	s.skillPromote = promote
+	return s
+}
+
 // PatternRecord captures a pattern that entered context for an episode.
 type PatternRecord struct {
 	PatternID      string
@@ -146,7 +168,8 @@ type RecordInput struct {
 
 // UtilityUpdate is one experience utility change after learning.
 type UtilityUpdate struct {
-	ExperienceID    string  `json:"experience_id"`
+	ExperienceID    string  `json:"experience_id,omitempty"`
+	SkillVersionID  string  `json:"skill_version_id,omitempty"`
 	LearningEventID string  `json:"learning_event_id,omitempty"`
 	Credit          float64 `json:"credit"`
 	Reward          float64 `json:"experience_reward"`
@@ -250,6 +273,10 @@ func (s *Service) ApplyFeedbackReward(
 ) ([]UtilityUpdate, error) {
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(episodeID) == "" || strings.TrimSpace(feedbackID) == "" {
 		return nil, fmt.Errorf("tenant_id, episode_id, and feedback_id are required")
+	}
+
+	if target != nil && target.Type == feedback.TargetSkillExecution {
+		return s.applySkillFeedback(ctx, tenantID, feedbackID, reward, confidence, target)
 	}
 
 	existing, err := s.events.ListByFeedback(ctx, tenantID, feedbackID)
@@ -858,4 +885,47 @@ func (s *Service) maybeMarkEvolutionDirty(ctx context.Context, tenantID string, 
 		return
 	}
 	_ = s.evolutionDirty.MarkDirty(ctx, tenantID, exp.Type, exp.Scope, exp.ScopeKey)
+}
+
+func (s *Service) applySkillFeedback(
+	ctx context.Context,
+	tenantID, feedbackID string,
+	reward, confidence float64,
+	target *feedback.Target,
+) ([]UtilityUpdate, error) {
+	if s.skillRepo == nil || s.skillLearning == nil {
+		return nil, fmt.Errorf("skill learning is not configured")
+	}
+	versionID := strings.TrimSpace(target.SkillVersionID)
+	before, err := s.skillRepo.GetVersion(ctx, tenantID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := skill.ApplyFeedback(
+		ctx, s.skillRepo, s.skillLearning, s.skillApplier,
+		tenantID, feedbackID, versionID, target.SkillExecutionID,
+		reward, confidence, 1.0,
+	); err != nil {
+		return nil, fmt.Errorf("apply skill feedback: %w", err)
+	}
+	after, err := s.skillRepo.GetVersion(ctx, tenantID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	if s.skillRegistry != nil {
+		_, _ = s.skillRegistry.MaybeSuspendFromLiveStats(ctx, tenantID, versionID, s.skillPromote)
+	}
+	ev, _ := s.skillLearning.GetLearningEventByFeedbackVersion(ctx, tenantID, feedbackID, versionID)
+	return []UtilityUpdate{{
+		SkillVersionID:  versionID,
+		LearningEventID: ev.ID,
+		Credit:          1,
+		Reward:          reward,
+		EffectiveReward: reward,
+		OldUtility:      before.Utility,
+		NewUtility:      after.Utility,
+		Alpha:           after.Alpha,
+		Beta:            after.Beta,
+		AlreadyApplied:  before.Utility == after.Utility && before.Alpha == after.Alpha,
+	}}, nil
 }

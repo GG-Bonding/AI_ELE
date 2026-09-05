@@ -74,20 +74,19 @@ func RunSkillBenchmark(ctx context.Context) (SkillBenchmarkMetrics, error) {
 	}
 
 	store := skillruntime.NewMemoryExecutionStore()
+	jiraExec := &skillruntime.JiraSimExecutor{
+		Sim: jirasim.New().WithMode(jirasim.ModeStrict), Registry: tools,
+	}
 	rt := &skillruntime.Runtime{
-		Tools: tools,
-		Exec: &skillruntime.JiraSimExecutor{
-			Sim: jirasim.New().WithMode(jirasim.ModeStrict), Registry: tools,
-		},
-		Policy: skillruntime.DefaultPolicy{},
-		Store:  store,
+		Tools: tools, Exec: jiraExec, Preview: jiraExec,
+		Policy: skillruntime.DefaultPolicy{}, Store: store,
 	}
 
 	inputs := map[string]any{"project_name": "Payment", "title": "payment timeout"}
 	available := []string{"jira.search_projects", "jira.create_issue"}
 
 	for i := 0; i < 5; i++ {
-		ex, _, err := rt.Run(ctx, skillruntime.RunRequest{
+		ex, _, err := rt.Run(ctx, skill.ExecutionRunRequest{
 			TenantID: "bench", SkillID: sk.ID, SkillVersionID: ver.ID,
 			Mode: skill.ModeShadow, Spec: ver.Spec, Inputs: inputs,
 			AvailableTools: available, RuntimeEnabled: true,
@@ -132,7 +131,7 @@ func RunSkillBenchmark(ctx context.Context) (SkillBenchmarkMetrics, error) {
 		if len(ranked) > 0 && ranked[0].Skill.ID == sk.ID {
 			selectHit++
 		}
-		ex, stepRuns, err := rt.Run(ctx, skillruntime.RunRequest{
+		ex, stepRuns, err := rt.Run(ctx, skill.ExecutionRunRequest{
 			TenantID: "bench", SkillID: sk.ID, SkillVersionID: ver.ID,
 			Mode: skill.ModeLive, Spec: ver.Spec, Inputs: inputs,
 			AvailableTools: available, RuntimeEnabled: true,
@@ -147,7 +146,7 @@ func RunSkillBenchmark(ctx context.Context) (SkillBenchmarkMetrics, error) {
 		}
 	}
 
-	denyEx, _, err := rt.Run(ctx, skillruntime.RunRequest{
+	denyEx, _, err := rt.Run(ctx, skill.ExecutionRunRequest{
 		TenantID: "bench", SkillID: sk.ID, SkillVersionID: ver.ID,
 		Mode: skill.ModeLive,
 		Spec: skill.Spec{

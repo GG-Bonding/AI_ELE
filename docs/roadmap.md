@@ -136,6 +136,7 @@ Full DoD and architecture: [docs/v2.md](v2.md).
 | V3-7 Skill Learning | ✅ landed |
 | V3-8 Skill Evolution | ✅ landed |
 | V3-9 Counterfactual Attribution | ✅ landed |
-| V3-10 Skill vs Pattern benchmark | ✅ landed |
+| V3-10 Skill vs Pattern benchmark | ✅ landed (synthetic; full learning-chain bench tracked in V3.1+) |
+| **V3.1 Production hardening** | 🔄 in progress — lifecycle gate, approval resume, atomic learning, PreviewExecutor |
 
 Full architecture and non-goals: [docs/v3.md](v3.md).

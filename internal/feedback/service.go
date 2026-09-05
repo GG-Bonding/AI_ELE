@@ -32,7 +32,8 @@ type UtilityLearner interface {
 
 // UtilityChange is a compact learning result exposed on feedback submit.
 type UtilityChange struct {
-	ExperienceID    string  `json:"experience_id"`
+	ExperienceID    string  `json:"experience_id,omitempty"`
+	SkillVersionID  string  `json:"skill_version_id,omitempty"`
 	OldUtility      float64 `json:"old_utility"`
 	NewUtility      float64 `json:"new_utility"`
 	Credit          float64 `json:"credit"`

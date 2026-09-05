@@ -37,6 +37,15 @@ func (r *SkillExecutionRepository) CreateExecution(ctx context.Context, ex skill
 	`, ex.ID, ex.TenantID, nullStr(ex.EpisodeID), ex.SkillID, ex.SkillVersionID, string(ex.Mode), string(ex.Status),
 		idem, in, out, ex.ErrorCode, ex.ErrorMessage, ex.StartedAt, ex.CompletedAt)
 	if err != nil {
+		if strings.TrimSpace(ex.IdempotencyKey) != "" &&
+			(strings.Contains(err.Error(), "idx_skill_executions_idempotency") ||
+				strings.Contains(err.Error(), "duplicate key") ||
+				strings.Contains(err.Error(), "unique")) {
+			existing, getErr := r.GetExecutionByIdempotency(ctx, ex.TenantID, ex.IdempotencyKey)
+			if getErr == nil {
+				return existing, nil
+			}
+		}
 		return skill.Execution{}, fmt.Errorf("insert skill execution: %w", err)
 	}
 	return ex, nil
@@ -142,6 +151,21 @@ func (r *SkillExecutionRepository) GetApproval(ctx context.Context, tenantID, id
 		SELECT id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at
 		FROM skill_approval_requests WHERE tenant_id=$1 AND id=$2
 	`, tenantID, id)
+	return scanApproval(row)
+}
+
+func (r *SkillExecutionRepository) GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (skill.ApprovalRequest, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at
+		FROM skill_approval_requests
+		WHERE tenant_id=$1 AND execution_id=$2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenantID, executionID)
+	return scanApproval(row)
+}
+
+func scanApproval(row execScanner) (skill.ApprovalRequest, error) {
 	var req skill.ApprovalRequest
 	var status string
 	var resolved sql.NullTime
@@ -176,6 +200,15 @@ func (r *SkillExecutionRepository) CreateLearningEvent(ctx context.Context, ev s
 	return ev, nil
 }
 
+func (r *SkillExecutionRepository) GetLearningEvent(ctx context.Context, tenantID, id string) (skill.LearningEvent, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, skill_id, skill_version_id, COALESCE(execution_id,''), feedback_id,
+		       reward, confidence, credit, status, created_at, applied_at
+		FROM skill_learning_events WHERE tenant_id=$1 AND id=$2
+	`, tenantID, id)
+	return scanSkillLearningEvent(row)
+}
+
 func (r *SkillExecutionRepository) GetLearningEventByFeedbackVersion(ctx context.Context, tenantID, feedbackID, versionID string) (skill.LearningEvent, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, skill_id, skill_version_id, COALESCE(execution_id,''), feedback_id,
@@ -183,6 +216,10 @@ func (r *SkillExecutionRepository) GetLearningEventByFeedbackVersion(ctx context
 		FROM skill_learning_events
 		WHERE tenant_id=$1 AND feedback_id=$2 AND skill_version_id=$3
 	`, tenantID, feedbackID, versionID)
+	return scanSkillLearningEvent(row)
+}
+
+func scanSkillLearningEvent(row execScanner) (skill.LearningEvent, error) {
 	var ev skill.LearningEvent
 	var applied sql.NullTime
 	if err := row.Scan(&ev.ID, &ev.TenantID, &ev.SkillID, &ev.SkillVersionID, &ev.ExecutionID, &ev.FeedbackID,
