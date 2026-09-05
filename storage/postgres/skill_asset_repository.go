@@ -101,11 +101,13 @@ func (r *SkillAssetRepository) CreateVersion(ctx context.Context, ver skill.Vers
 		INSERT INTO skill_versions (
 			id, skill_id, tenant_id, version, pattern_id,
 			spec_json, spec_yaml, spec_hash, confidence, utility,
+			alpha, beta, success_count, failure_count, shadow_successes, shadow_failures,
 			status, validation_status, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 	`,
 		ver.ID, ver.SkillID, ver.TenantID, ver.Version, pattern,
 		specJSON, ver.SpecYAML, ver.SpecHash, ver.Confidence, ver.Utility,
+		ver.Alpha, ver.Beta, ver.SuccessCount, ver.FailureCount, ver.ShadowSuccesses, ver.ShadowFailures,
 		string(ver.Status), string(ver.ValidationStatus), ver.CreatedAt,
 	)
 	if err != nil {
@@ -118,6 +120,8 @@ func (r *SkillAssetRepository) GetVersion(ctx context.Context, tenantID, id stri
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, skill_id, tenant_id, version, COALESCE(pattern_id, ''),
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
+		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
+		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
 		       status, validation_status, created_at
 		FROM skill_versions WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id)
@@ -135,6 +139,8 @@ func (r *SkillAssetRepository) ListVersions(ctx context.Context, tenantID, skill
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, skill_id, tenant_id, version, COALESCE(pattern_id, ''),
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
+		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
+		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
 		       status, validation_status, created_at
 		FROM skill_versions
 		WHERE tenant_id = $1 AND skill_id = $2
@@ -159,6 +165,8 @@ func (r *SkillAssetRepository) GetVersionByNumber(ctx context.Context, tenantID,
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, skill_id, tenant_id, version, COALESCE(pattern_id, ''),
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
+		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
+		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
 		       status, validation_status, created_at
 		FROM skill_versions
 		WHERE tenant_id = $1 AND skill_id = $2 AND version = $3
@@ -171,6 +179,79 @@ func (r *SkillAssetRepository) GetVersionByNumber(ctx context.Context, tenantID,
 		return skill.Version{}, fmt.Errorf("get skill version by number: %w", err)
 	}
 	return ver, nil
+}
+
+func (r *SkillAssetRepository) ListSkills(ctx context.Context, tenantID string, statuses []skill.Status) ([]skill.Skill, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, name, description, status, active_version_id, created_at, updated_at
+		FROM skills WHERE tenant_id = $1
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	allow := map[skill.Status]struct{}{}
+	for _, s := range statuses {
+		allow[s] = struct{}{}
+	}
+	var out []skill.Skill
+	for rows.Next() {
+		sk, err := scanSkillAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		if len(allow) > 0 {
+			if _, ok := allow[sk.Status]; !ok {
+				continue
+			}
+		}
+		out = append(out, sk)
+	}
+	return out, rows.Err()
+}
+
+func (r *SkillAssetRepository) UpdateVersion(ctx context.Context, ver skill.Version) (skill.Version, error) {
+	specJSON, err := json.Marshal(ver.Spec)
+	if err != nil {
+		return skill.Version{}, err
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE skill_versions SET
+			spec_json=$3, spec_yaml=$4, spec_hash=$5, confidence=$6, utility=$7,
+			alpha=$8, beta=$9, success_count=$10, failure_count=$11,
+			shadow_successes=$12, shadow_failures=$13,
+			status=$14, validation_status=$15
+		WHERE tenant_id=$1 AND id=$2
+	`, ver.TenantID, ver.ID, specJSON, ver.SpecYAML, ver.SpecHash, ver.Confidence, ver.Utility,
+		ver.Alpha, ver.Beta, ver.SuccessCount, ver.FailureCount, ver.ShadowSuccesses, ver.ShadowFailures,
+		string(ver.Status), string(ver.ValidationStatus))
+	if err != nil {
+		return skill.Version{}, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return skill.Version{}, skill.ErrNotFound
+	}
+	return ver, nil
+}
+
+func (r *SkillAssetRepository) ListActiveVersions(ctx context.Context, tenantID string) ([]skill.Version, error) {
+	skills, err := r.ListSkills(ctx, tenantID, []skill.Status{skill.StatusActive})
+	if err != nil {
+		return nil, err
+	}
+	var out []skill.Version
+	for _, sk := range skills {
+		if sk.ActiveVersionID == nil {
+			continue
+		}
+		ver, err := r.GetVersion(ctx, tenantID, *sk.ActiveVersionID)
+		if err != nil {
+			continue
+		}
+		out = append(out, ver)
+	}
+	return out, nil
 }
 
 type skillAssetScanner interface {
@@ -205,6 +286,8 @@ func scanSkillVersion(row skillAssetScanner) (skill.Version, error) {
 	if err := row.Scan(
 		&ver.ID, &ver.SkillID, &ver.TenantID, &ver.Version, &ver.PatternID,
 		&specJSON, &ver.SpecYAML, &ver.SpecHash, &ver.Confidence, &ver.Utility,
+		&ver.Alpha, &ver.Beta, &ver.SuccessCount, &ver.FailureCount,
+		&ver.ShadowSuccesses, &ver.ShadowFailures,
 		&status, &validation, &createdAt,
 	); err != nil {
 		return skill.Version{}, err
