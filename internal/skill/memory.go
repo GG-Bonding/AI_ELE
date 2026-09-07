@@ -243,3 +243,133 @@ func (m *MemoryRepository) ListActiveVersions(ctx context.Context, tenantID stri
 	}
 	return out, nil
 }
+
+// SaveCompiled atomically inserts Skill + Version (validated fields already set).
+func (m *MemoryRepository) SaveCompiled(ctx context.Context, sk Skill, ver Version) (Skill, Version, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sk.TenantID = strings.TrimSpace(sk.TenantID)
+	sk.Name = strings.TrimSpace(sk.Name)
+	if sk.TenantID == "" || sk.Name == "" {
+		return Skill{}, Version{}, fmt.Errorf("%w: tenant_id and name are required", ErrInvalidInput)
+	}
+	nameKey := m.key(sk.TenantID, sk.Name)
+	if _, ok := m.byName[nameKey]; ok {
+		return Skill{}, Version{}, fmt.Errorf("%w: skill name %q already exists", ErrConflict, sk.Name)
+	}
+	if sk.ID == "" {
+		sk.ID = m.nextID("sk")
+	}
+	now := m.now()
+	if sk.CreatedAt.IsZero() {
+		sk.CreatedAt = now
+	}
+	sk.UpdatedAt = now
+	ver.TenantID = sk.TenantID
+	ver.SkillID = sk.ID
+	if ver.ID == "" {
+		ver.ID = m.nextID("skv")
+	}
+	if ver.CreatedAt.IsZero() {
+		ver.CreatedAt = now
+	}
+	if ver.Version <= 0 {
+		ver.Version = 1
+	}
+	m.skills[m.key(sk.TenantID, sk.ID)] = sk
+	m.byName[nameKey] = sk.ID
+	m.versions[m.key(ver.TenantID, ver.ID)] = ver
+	m.byNum[fmt.Sprintf("%s|%s|%d", ver.TenantID, ver.SkillID, ver.Version)] = ver.ID
+	return sk, ver, nil
+}
+
+// TransitionToShadow atomically sets skill+version to SHADOW.
+func (m *MemoryRepository) TransitionToShadow(ctx context.Context, tenantID, skillID, versionID string) (Skill, Version, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sk, ok := m.skills[m.key(tenantID, skillID)]
+	if !ok {
+		return Skill{}, Version{}, ErrNotFound
+	}
+	ver, ok := m.versions[m.key(tenantID, versionID)]
+	if !ok || ver.SkillID != skillID {
+		return Skill{}, Version{}, ErrNotFound
+	}
+	ver.Status = VersionShadow
+	sk.Status = StatusShadow
+	sk.UpdatedAt = m.now()
+	m.versions[m.key(tenantID, versionID)] = ver
+	m.skills[m.key(tenantID, skillID)] = sk
+	return sk, ver, nil
+}
+
+// ActivateVersion atomically activates version and optionally deprecates previous.
+func (m *MemoryRepository) ActivateVersion(ctx context.Context, tenantID, skillID, versionID, previousActiveID string) (Skill, Version, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sk, ok := m.skills[m.key(tenantID, skillID)]
+	if !ok {
+		return Skill{}, Version{}, ErrNotFound
+	}
+	ver, ok := m.versions[m.key(tenantID, versionID)]
+	if !ok || ver.SkillID != skillID {
+		return Skill{}, Version{}, ErrNotFound
+	}
+	if previousActiveID != "" && previousActiveID != versionID {
+		prev, ok := m.versions[m.key(tenantID, previousActiveID)]
+		if ok {
+			prev.Status = VersionDeprecated
+			m.versions[m.key(tenantID, previousActiveID)] = prev
+		}
+	}
+	ver.Status = VersionActive
+	id := ver.ID
+	sk.Status = StatusActive
+	sk.ActiveVersionID = &id
+	sk.UpdatedAt = m.now()
+	m.versions[m.key(tenantID, versionID)] = ver
+	m.skills[m.key(tenantID, skillID)] = sk
+	return sk, ver, nil
+}
+
+// SuspendActive atomically suspends skill and version.
+func (m *MemoryRepository) SuspendActive(ctx context.Context, tenantID, skillID, versionID string) (Skill, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sk, ok := m.skills[m.key(tenantID, skillID)]
+	if !ok {
+		return Skill{}, ErrNotFound
+	}
+	if versionID != "" {
+		if ver, ok := m.versions[m.key(tenantID, versionID)]; ok {
+			ver.Status = VersionSuspended
+			m.versions[m.key(tenantID, versionID)] = ver
+		}
+	}
+	sk.Status = StatusSuspended
+	sk.UpdatedAt = m.now()
+	m.skills[m.key(tenantID, skillID)] = sk
+	return sk, nil
+}
+
+// IncrementShadowOutcome atomically bumps shadow success/failure counters.
+func (m *MemoryRepository) IncrementShadowOutcome(ctx context.Context, tenantID, versionID string, success bool) (Version, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ver, ok := m.versions[m.key(tenantID, versionID)]
+	if !ok {
+		return Version{}, ErrNotFound
+	}
+	if success {
+		ver.ShadowSuccesses++
+	} else {
+		ver.ShadowFailures++
+	}
+	m.versions[m.key(tenantID, versionID)] = ver
+	return ver, nil
+}

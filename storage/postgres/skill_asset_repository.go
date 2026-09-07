@@ -254,6 +254,189 @@ func (r *SkillAssetRepository) ListActiveVersions(ctx context.Context, tenantID 
 	return out, nil
 }
 
+func (r *SkillAssetRepository) SaveCompiled(ctx context.Context, sk skill.Skill, ver skill.Version) (skill.Skill, skill.Version, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, fmt.Errorf("begin save compiled: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var active any
+	if sk.ActiveVersionID != nil && strings.TrimSpace(*sk.ActiveVersionID) != "" {
+		active = strings.TrimSpace(*sk.ActiveVersionID)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO skills (
+			id, tenant_id, name, description, status, active_version_id, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	`, sk.ID, sk.TenantID, sk.Name, sk.Description, string(sk.Status), active, sk.CreatedAt, sk.UpdatedAt)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, fmt.Errorf("insert skill: %w", err)
+	}
+
+	specJSON, err := json.Marshal(ver.Spec)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	var pattern any
+	if strings.TrimSpace(ver.PatternID) != "" {
+		pattern = ver.PatternID
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO skill_versions (
+			id, skill_id, tenant_id, version, pattern_id,
+			spec_json, spec_yaml, spec_hash, confidence, utility,
+			alpha, beta, success_count, failure_count, shadow_successes, shadow_failures,
+			status, validation_status, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+	`,
+		ver.ID, sk.ID, sk.TenantID, ver.Version, pattern,
+		specJSON, ver.SpecYAML, ver.SpecHash, ver.Confidence, ver.Utility,
+		ver.Alpha, ver.Beta, ver.SuccessCount, ver.FailureCount, ver.ShadowSuccesses, ver.ShadowFailures,
+		string(ver.Status), string(ver.ValidationStatus), ver.CreatedAt,
+	)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, fmt.Errorf("insert skill version: %w", err)
+	}
+	ver.SkillID = sk.ID
+	ver.TenantID = sk.TenantID
+	if err := tx.Commit(); err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	return sk, ver, nil
+}
+
+func (r *SkillAssetRepository) TransitionToShadow(ctx context.Context, tenantID, skillID, versionID string) (skill.Skill, skill.Version, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE skill_versions SET status=$3 WHERE tenant_id=$1 AND id=$2 AND skill_id=$4
+	`, tenantID, versionID, string(skill.VersionShadow), skillID)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return skill.Skill{}, skill.Version{}, skill.ErrNotFound
+	}
+	res, err = tx.ExecContext(ctx, `
+		UPDATE skills SET status=$3, updated_at=$4 WHERE tenant_id=$1 AND id=$2
+	`, tenantID, skillID, string(skill.StatusShadow), now)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return skill.Skill{}, skill.Version{}, skill.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	sk, err := r.GetSkill(ctx, tenantID, skillID)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	ver, err := r.GetVersion(ctx, tenantID, versionID)
+	return sk, ver, err
+}
+
+func (r *SkillAssetRepository) ActivateVersion(ctx context.Context, tenantID, skillID, versionID, previousActiveID string) (skill.Skill, skill.Version, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	if previousActiveID != "" && previousActiveID != versionID {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE skill_versions SET status=$3 WHERE tenant_id=$1 AND id=$2
+		`, tenantID, previousActiveID, string(skill.VersionDeprecated))
+		if err != nil {
+			return skill.Skill{}, skill.Version{}, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE skill_versions SET status=$3 WHERE tenant_id=$1 AND id=$2 AND skill_id=$4
+	`, tenantID, versionID, string(skill.VersionActive), skillID)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return skill.Skill{}, skill.Version{}, skill.ErrNotFound
+	}
+	res, err = tx.ExecContext(ctx, `
+		UPDATE skills SET status=$3, active_version_id=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2
+	`, tenantID, skillID, string(skill.StatusActive), versionID, now)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return skill.Skill{}, skill.Version{}, skill.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	sk, err := r.GetSkill(ctx, tenantID, skillID)
+	if err != nil {
+		return skill.Skill{}, skill.Version{}, err
+	}
+	ver, err := r.GetVersion(ctx, tenantID, versionID)
+	return sk, ver, err
+}
+
+func (r *SkillAssetRepository) SuspendActive(ctx context.Context, tenantID, skillID, versionID string) (skill.Skill, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return skill.Skill{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	if versionID != "" {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE skill_versions SET status=$3 WHERE tenant_id=$1 AND id=$2
+		`, tenantID, versionID, string(skill.VersionSuspended))
+		if err != nil {
+			return skill.Skill{}, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE skills SET status=$3, updated_at=$4 WHERE tenant_id=$1 AND id=$2
+	`, tenantID, skillID, string(skill.StatusSuspended), now)
+	if err != nil {
+		return skill.Skill{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return skill.Skill{}, skill.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return skill.Skill{}, err
+	}
+	return r.GetSkill(ctx, tenantID, skillID)
+}
+
+func (r *SkillAssetRepository) IncrementShadowOutcome(ctx context.Context, tenantID, versionID string, success bool) (skill.Version, error) {
+	col := "shadow_failures"
+	if success {
+		col = "shadow_successes"
+	}
+	//nolint:gosec // col is fixed literal
+	res, err := r.db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE skill_versions SET %s = %s + 1 WHERE tenant_id=$1 AND id=$2
+	`, col, col), tenantID, versionID)
+	if err != nil {
+		return skill.Version{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return skill.Version{}, skill.ErrNotFound
+	}
+	return r.GetVersion(ctx, tenantID, versionID)
+}
+
 type skillAssetScanner interface {
 	Scan(dest ...any) error
 }

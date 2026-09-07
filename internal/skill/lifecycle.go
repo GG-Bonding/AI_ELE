@@ -87,7 +87,7 @@ type RegistryService struct {
 	Validator SpecValidator
 }
 
-// CompileAndCreate parses YAML, creates Skill+Version, validates, and persists the result.
+// CompileAndCreate parses YAML, validates, then atomically persists Skill+Version.
 func (s *RegistryService) CompileAndCreate(
 	ctx context.Context,
 	tenantID, name, description, patternID, yamlDoc string,
@@ -111,7 +111,7 @@ func (s *RegistryService) CompileAndCreate(
 	}
 
 	now := time.Now().UTC()
-	sk, err := s.Repo.CreateSkill(ctx, Skill{
+	sk := Skill{
 		ID:          uuid.NewString(),
 		TenantID:    tenantID,
 		Name:        name,
@@ -119,43 +119,32 @@ func (s *RegistryService) CompileAndCreate(
 		Status:      StatusCandidate,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-	})
-	if err != nil {
-		return Skill{}, Version{}, ValidationReport{}, err
 	}
 
 	ver, err := NewVersion(tenantID, sk.ID, patternID, 1, spec, yamlDoc, confidence, utility, now)
 	if err != nil {
-		return sk, Version{}, ValidationReport{}, err
+		return Skill{}, Version{}, ValidationReport{}, err
 	}
 	ver.ID = uuid.NewString()
 	ver = WithSeededBeta(ver)
-	ver, err = s.Repo.CreateVersion(ctx, ver)
-	if err != nil {
-		return sk, Version{}, ValidationReport{}, err
-	}
 
 	rep := ValidationReport{OK: true, Normalized: ver.Spec, ComputedRisk: ver.Spec.Risk.Level}
 	if s.Validator != nil {
 		rep = s.Validator.Validate(ver.Spec)
 	}
 	ver = ApplyValidationReport(ver, rep)
-	ver, err = s.Repo.UpdateVersion(ctx, ver)
-	if err != nil {
-		return sk, ver, rep, err
-	}
-
 	if rep.OK {
 		sk.Status = StatusValidated
-		sk, err = s.Repo.UpdateSkill(ctx, sk)
-		if err != nil {
-			return sk, ver, rep, err
-		}
+	}
+
+	sk, ver, err = s.Repo.SaveCompiled(ctx, sk, ver)
+	if err != nil {
+		return Skill{}, Version{}, rep, err
 	}
 	return sk, ver, rep, nil
 }
 
-// MoveToShadow promotes a PASSED version into SHADOW (skill + version).
+// MoveToShadow promotes a PASSED version into SHADOW (skill + version) atomically.
 func (s *RegistryService) MoveToShadow(ctx context.Context, tenantID, versionID string) (Version, error) {
 	if s == nil || s.Repo == nil {
 		return Version{}, fmt.Errorf("%w: registry service not configured", ErrInvalidInput)
@@ -167,21 +156,8 @@ func (s *RegistryService) MoveToShadow(ctx context.Context, tenantID, versionID 
 	if ver.ValidationStatus != ValidationPassed {
 		return Version{}, fmt.Errorf("%w: version must be ValidationPassed", ErrInvalidTransition)
 	}
-	sk, err := s.Repo.GetSkill(ctx, tenantID, ver.SkillID)
-	if err != nil {
-		return Version{}, err
-	}
-
-	ver.Status = VersionShadow
-	ver, err = s.Repo.UpdateVersion(ctx, ver)
-	if err != nil {
-		return Version{}, err
-	}
-	sk.Status = StatusShadow
-	if _, err := s.Repo.UpdateSkill(ctx, sk); err != nil {
-		return ver, err
-	}
-	return ver, nil
+	_, ver, err = s.Repo.TransitionToShadow(ctx, tenantID, ver.SkillID, ver.ID)
+	return ver, err
 }
 
 // Activate promotes a SHADOW version to ACTIVE when shadow gates pass.
@@ -211,32 +187,15 @@ func (s *RegistryService) Activate(ctx context.Context, tenantID, versionID stri
 	if err != nil {
 		return Version{}, err
 	}
-	if sk.ActiveVersionID != nil && *sk.ActiveVersionID != ver.ID {
-		prev, err := s.Repo.GetVersion(ctx, tenantID, *sk.ActiveVersionID)
-		if err != nil {
-			return Version{}, err
-		}
-		prev.Status = VersionDeprecated
-		if _, err := s.Repo.UpdateVersion(ctx, prev); err != nil {
-			return Version{}, err
-		}
+	prevID := ""
+	if sk.ActiveVersionID != nil {
+		prevID = *sk.ActiveVersionID
 	}
-
-	ver.Status = VersionActive
-	ver, err = s.Repo.UpdateVersion(ctx, ver)
-	if err != nil {
-		return Version{}, err
-	}
-	id := ver.ID
-	sk.Status = StatusActive
-	sk.ActiveVersionID = &id
-	if _, err := s.Repo.UpdateSkill(ctx, sk); err != nil {
-		return ver, err
-	}
-	return ver, nil
+	_, ver, err = s.Repo.ActivateVersion(ctx, tenantID, ver.SkillID, ver.ID, prevID)
+	return ver, err
 }
 
-// Suspend marks a skill and its active version SUSPENDED.
+// Suspend marks a skill and its active version SUSPENDED atomically.
 func (s *RegistryService) Suspend(ctx context.Context, tenantID, skillID, reason string) (Skill, error) {
 	_ = reason
 	if s == nil || s.Repo == nil {
@@ -246,35 +205,19 @@ func (s *RegistryService) Suspend(ctx context.Context, tenantID, skillID, reason
 	if err != nil {
 		return Skill{}, err
 	}
+	versionID := ""
 	if sk.ActiveVersionID != nil {
-		ver, err := s.Repo.GetVersion(ctx, tenantID, *sk.ActiveVersionID)
-		if err != nil {
-			return Skill{}, err
-		}
-		ver.Status = VersionSuspended
-		if _, err := s.Repo.UpdateVersion(ctx, ver); err != nil {
-			return Skill{}, err
-		}
+		versionID = *sk.ActiveVersionID
 	}
-	sk.Status = StatusSuspended
-	return s.Repo.UpdateSkill(ctx, sk)
+	return s.Repo.SuspendActive(ctx, tenantID, skillID, versionID)
 }
 
-// RecordShadowOutcome bumps shadow success/failure counters on a version.
+// RecordShadowOutcome atomically bumps shadow success/failure counters.
 func (s *RegistryService) RecordShadowOutcome(ctx context.Context, tenantID, versionID string, success bool) (Version, error) {
 	if s == nil || s.Repo == nil {
 		return Version{}, fmt.Errorf("%w: registry service not configured", ErrInvalidInput)
 	}
-	ver, err := s.Repo.GetVersion(ctx, tenantID, versionID)
-	if err != nil {
-		return Version{}, err
-	}
-	if success {
-		ver.ShadowSuccesses++
-	} else {
-		ver.ShadowFailures++
-	}
-	return s.Repo.UpdateVersion(ctx, ver)
+	return s.Repo.IncrementShadowOutcome(ctx, tenantID, versionID, success)
 }
 
 // MaybeSuspendFromLiveStats suspends when FailureCount/(Success+Failure) exceeds the gate

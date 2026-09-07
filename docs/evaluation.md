@@ -99,3 +99,21 @@ SkillSuccess       = 1.0
 UnsafeSkillRate    = 0
 Activated / ShadowOK = true
 ```
+
+## V3.1 Learning-chain Benchmark
+
+Proves Experience → Pattern → Skill → Feedback → Evolution (v2) under strict Jira sim:
+
+```bash
+go test ./internal/eval/ -run TestLearningChainBeatsPatternAndEvolves -v
+```
+
+Expected:
+
+```text
+SkillV1Success > PatternOnlySuccess
+SkillV2Success > PatternOnlySuccess
+UtilityAfterFail < UtilityAfterReward
+V2Promoted / V1Superseded = true
+UnsafeRate = 0
+```

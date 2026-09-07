@@ -243,4 +243,11 @@ type Repository interface {
 	ListSkills(ctx context.Context, tenantID string, statuses []Status) ([]Skill, error)
 	UpdateVersion(ctx context.Context, ver Version) (Version, error)
 	ListActiveVersions(ctx context.Context, tenantID string) ([]Version, error)
+
+	// Atomic lifecycle helpers (single mutex / DB transaction).
+	SaveCompiled(ctx context.Context, sk Skill, ver Version) (Skill, Version, error)
+	TransitionToShadow(ctx context.Context, tenantID, skillID, versionID string) (Skill, Version, error)
+	ActivateVersion(ctx context.Context, tenantID, skillID, versionID string, previousActiveID string) (Skill, Version, error)
+	SuspendActive(ctx context.Context, tenantID, skillID, versionID string) (Skill, error)
+	IncrementShadowOutcome(ctx context.Context, tenantID, versionID string, success bool) (Version, error)
 }
