@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -372,4 +373,39 @@ func (m *MemoryRepository) IncrementShadowOutcome(ctx context.Context, tenantID,
 	}
 	m.versions[m.key(tenantID, versionID)] = ver
 	return ver, nil
+}
+
+// SearchActiveByEmbedding implements Repository (in-memory cosine over stored embeddings).
+func (m *MemoryRepository) SearchActiveByEmbedding(ctx context.Context, tenantID string, query []float32, topK int) ([]ScoredVersion, error) {
+	_ = ctx
+	if len(query) == 0 {
+		return nil, ErrNotSupported
+	}
+	if topK <= 0 {
+		topK = 20
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []ScoredVersion
+	for _, sk := range m.skills {
+		if sk.TenantID != tenantID || sk.Status != StatusActive || sk.ActiveVersionID == nil {
+			continue
+		}
+		ver, ok := m.versions[m.key(tenantID, *sk.ActiveVersionID)]
+		if !ok || ver.ValidationStatus != ValidationPassed || len(ver.Embedding) == 0 {
+			continue
+		}
+		sim := cosineSim(query, ver.Embedding)
+		out = append(out, ScoredVersion{Skill: sk, Version: ver, Similarity: sim})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Similarity == out[j].Similarity {
+			return out[i].Skill.Name < out[j].Skill.Name
+		}
+		return out[i].Similarity > out[j].Similarity
+	})
+	if len(out) > topK {
+		out = out[:topK]
+	}
+	return out, nil
 }

@@ -121,6 +121,20 @@ func (s *ExecutionService) Execute(ctx context.Context, in ExecuteInput) (Execut
 	if mode == ModeShadow && s.Registry != nil {
 		_, _ = s.Registry.RecordShadowOutcome(ctx, tenantID, ver.ID, ex.Status == ExecSucceeded)
 	}
+	// V3.2: failure-driven automatic revision (best-effort; never fails the execution path).
+	if mode == ModeLive && ex.Status == ExecFailed {
+		codes := []string{ex.ErrorCode}
+		msgs := []string{ex.ErrorMessage}
+		for _, st := range steps {
+			if st.Status == StepFailed && st.ErrorCode != "" {
+				codes = append(codes, st.ErrorCode)
+			}
+		}
+		_, _, _ = AutoRevise(ctx, s.Repo, tenantID, ver.SkillID, "", ver.Spec, RevisionHint{
+			FailureCodes:    codes,
+			FailureMessages: msgs,
+		})
+	}
 	return ex, steps, nil
 }
 

@@ -138,5 +138,6 @@ Full DoD and architecture: [docs/v2.md](v2.md).
 | V3-9 Counterfactual Attribution | ✅ landed |
 | V3-10 Skill vs Pattern benchmark | ✅ landed (synthetic; full learning-chain bench tracked in V3.1+) |
 | **V3.1 Production hardening** | ✅ lifecycle gate, approval resume, atomic learning, PreviewExecutor, transactional lifecycle, learning-chain bench |
+| **V3.2 Smart skill layer** | ✅ semantic retrieve, AutoRevise, shadow A/B, offline ACE replay, Thompson select |
 
 Full architecture and non-goals: [docs/v3.md](v3.md).

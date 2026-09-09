@@ -117,3 +117,13 @@ UtilityAfterFail < UtilityAfterReward
 V2Promoted / V1Superseded = true
 UnsafeRate = 0
 ```
+
+## V3.2 Counterfactual Replay
+
+Offline with-skill vs pattern-tip ACE on strict Jira sim:
+
+```bash
+go test ./internal/eval/ -run TestReplayJiraCounterfactualPrefersSkill -v
+```
+
+Expected: `PreferSkill=true`, positive `ACEReward` (skill succeeds where tip-only fails).

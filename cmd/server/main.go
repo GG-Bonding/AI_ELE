@@ -18,6 +18,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episodelearn"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/evolutionjob"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/experience"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/extractor"
@@ -30,7 +31,6 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillvalidator"
-	"github.com/agent-experience-engine/agent-experience-engine/internal/eval/jirasim"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
@@ -141,6 +141,7 @@ func run() error {
 		logger.Info("experience extraction disabled")
 	}
 
+	var skillEmbedder provider.EmbeddingProvider
 	if cfg.Embedding.Enabled {
 		embedder, err := provider.NewOpenAICompatEmbedding(provider.OpenAICompatEmbeddingConfig{
 			BaseURL:    cfg.Embedding.BaseURL,
@@ -151,6 +152,7 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("init embedding provider: %w", err)
 		}
+		skillEmbedder = embedder
 		experienceSvc = experienceSvc.WithEmbedder(embedder)
 		storeCfg := experience.StorePipelineConfig{
 			ActiveMin:    cfg.Evaluator.ActiveMin,
@@ -254,7 +256,7 @@ func run() error {
 			Policy:  skillruntime.DefaultPolicy{AllowMedium: cfg.SkillRuntime.AllowMediumRiskLive},
 			Store:   execRepo,
 		}
-		registry := &skill.RegistryService{Repo: skillAssetRepo, Validator: validator}
+		registry := &skill.RegistryService{Repo: skillAssetRepo, Validator: validator, Embedder: skillEmbedder}
 		promote := skill.PromoteConfig{
 			ShadowMinExecutions:   cfg.SkillRuntime.ShadowMinExecutions,
 			ShadowMinSuccessRate:  cfg.SkillRuntime.ShadowMinSuccessRate,
@@ -275,7 +277,8 @@ func run() error {
 			Registry: registry,
 			Promote:  promote,
 		}
-		logger.Info("skill runtime feature gate enabled (V3)")
+		opts.SkillRetriever = &skill.Retriever{Repo: skillAssetRepo, Tools: tools, Embedder: skillEmbedder}
+		logger.Info("skill runtime feature gate enabled (V3)", "semantic_retrieve", skillEmbedder != nil)
 	} else {
 		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")
 	}

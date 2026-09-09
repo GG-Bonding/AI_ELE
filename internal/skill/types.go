@@ -221,6 +221,9 @@ type Version struct {
 	Status           VersionStatus    `json:"status"`
 	ValidationStatus ValidationStatus `json:"validation_status"`
 
+	// Embedding is optional semantic vector for retrieval (V3.2); omitted from API by default.
+	Embedding []float32 `json:"-"`
+
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -250,4 +253,15 @@ type Repository interface {
 	ActivateVersion(ctx context.Context, tenantID, skillID, versionID string, previousActiveID string) (Skill, Version, error)
 	SuspendActive(ctx context.Context, tenantID, skillID, versionID string) (Skill, error)
 	IncrementShadowOutcome(ctx context.Context, tenantID, versionID string, success bool) (Version, error)
+
+	// SearchActiveByEmbedding returns ACTIVE+PASSED versions ranked by cosine similarity (V3.2).
+	// Implementations may return ErrNotSupported to force lexical fallback.
+	SearchActiveByEmbedding(ctx context.Context, tenantID string, query []float32, topK int) ([]ScoredVersion, error)
+}
+
+// ScoredVersion is an ACTIVE version with embedding similarity.
+type ScoredVersion struct {
+	Skill      Skill
+	Version    Version
+	Similarity float64
 }

@@ -109,15 +109,15 @@ type ActionService interface {
 
 // Server is the HTTP API surface.
 type Server struct {
-	logger        *slog.Logger
-	ready         ReadyChecker
-	episodes      EpisodeService
-	extractor     ExperienceExtractor
-	experiences   ExperienceService
-	retriever     ExperienceRetriever
-	storePipeline ExperienceStorePipeline
-	learning      EpisodeLearningProcessor
-	contexts      ContextService
+	logger         *slog.Logger
+	ready          ReadyChecker
+	episodes       EpisodeService
+	extractor      ExperienceExtractor
+	experiences    ExperienceService
+	retriever      ExperienceRetriever
+	storePipeline  ExperienceStorePipeline
+	learning       EpisodeLearningProcessor
+	contexts       ContextService
 	feedbacks      FeedbackService
 	actions        ActionService
 	patternRewards PatternRewardService
@@ -127,6 +127,7 @@ type Server struct {
 	skillRepo      skill.Repository
 	toolRegistry   *toolregistry.Registry
 	skillPromote   skill.PromoteConfig
+	skillRetriever *skill.Retriever
 	mux            *http.ServeMux
 }
 
@@ -144,12 +145,13 @@ type Options struct {
 	PatternRewards PatternRewardService
 
 	// V3 skill runtime (nil when skill_runtime.enabled=false).
-	SkillRegistry *skill.RegistryService
-	SkillRuntime  *skillruntime.Runtime
-	SkillExec     *skill.ExecutionService
-	SkillRepo     skill.Repository
-	ToolRegistry  *toolregistry.Registry
-	SkillPromote  skill.PromoteConfig
+	SkillRegistry  *skill.RegistryService
+	SkillRuntime   *skillruntime.Runtime
+	SkillExec      *skill.ExecutionService
+	SkillRepo      skill.Repository
+	ToolRegistry   *toolregistry.Registry
+	SkillPromote   skill.PromoteConfig
+	SkillRetriever *skill.Retriever
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -173,6 +175,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		skillRepo:      opts.SkillRepo,
 		toolRegistry:   opts.ToolRegistry,
 		skillPromote:   opts.SkillPromote,
+		skillRetriever: opts.SkillRetriever,
 		mux:            http.NewServeMux(),
 	}
 	s.routes()
@@ -214,6 +217,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/skill-runtime/compile", s.handleCompileSkill)
 	s.mux.HandleFunc("POST /api/v1/skill-runtime/execute", s.handleExecuteSkill)
 	s.mux.HandleFunc("POST /api/v1/skill-runtime/retrieve", s.handleRetrieveSkills)
+	s.mux.HandleFunc("POST /api/v1/skill-runtime/revise", s.handleReviseSkill)
+	s.mux.HandleFunc("POST /api/v1/skill-runtime/ab-compare", s.handleCompareShadowAB)
 	s.mux.HandleFunc("POST /api/v1/skill-versions/{version_id}/shadow", s.handleShadowSkillVersion)
 	s.mux.HandleFunc("POST /api/v1/skill-versions/{version_id}/activate", s.handleActivateSkillVersion)
 	s.mux.HandleFunc("POST /api/v1/skill-approvals/{approval_id}/approve", s.handleApproveSkillApproval)

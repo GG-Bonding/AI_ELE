@@ -96,7 +96,7 @@ func getSkillVersionForUpdate(ctx context.Context, tx *sql.Tx, tenantID, id stri
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
 		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
 		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
-		       status, validation_status, created_at
+		       status, validation_status, created_at, embedding::text
 		FROM skill_versions WHERE tenant_id = $1 AND id = $2
 		FOR UPDATE
 	`, tenantID, id)

@@ -97,18 +97,26 @@ func (r *SkillAssetRepository) CreateVersion(ctx context.Context, ver skill.Vers
 	if strings.TrimSpace(ver.PatternID) != "" {
 		pattern = ver.PatternID
 	}
+	var emb any
+	if len(ver.Embedding) > 0 {
+		embStr, err := formatVector(ver.Embedding)
+		if err != nil {
+			return skill.Version{}, err
+		}
+		emb = embStr
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO skill_versions (
 			id, skill_id, tenant_id, version, pattern_id,
 			spec_json, spec_yaml, spec_hash, confidence, utility,
 			alpha, beta, success_count, failure_count, shadow_successes, shadow_failures,
-			status, validation_status, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			status, validation_status, created_at, embedding
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::vector)
 	`,
 		ver.ID, ver.SkillID, ver.TenantID, ver.Version, pattern,
 		specJSON, ver.SpecYAML, ver.SpecHash, ver.Confidence, ver.Utility,
 		ver.Alpha, ver.Beta, ver.SuccessCount, ver.FailureCount, ver.ShadowSuccesses, ver.ShadowFailures,
-		string(ver.Status), string(ver.ValidationStatus), ver.CreatedAt,
+		string(ver.Status), string(ver.ValidationStatus), ver.CreatedAt, emb,
 	)
 	if err != nil {
 		return skill.Version{}, fmt.Errorf("insert skill version: %w", err)
@@ -122,7 +130,7 @@ func (r *SkillAssetRepository) GetVersion(ctx context.Context, tenantID, id stri
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
 		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
 		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
-		       status, validation_status, created_at
+		       status, validation_status, created_at, embedding::text
 		FROM skill_versions WHERE tenant_id = $1 AND id = $2
 	`, tenantID, id)
 	ver, err := scanSkillVersion(row)
@@ -141,7 +149,7 @@ func (r *SkillAssetRepository) ListVersions(ctx context.Context, tenantID, skill
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
 		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
 		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
-		       status, validation_status, created_at
+		       status, validation_status, created_at, embedding::text
 		FROM skill_versions
 		WHERE tenant_id = $1 AND skill_id = $2
 		ORDER BY version ASC
@@ -167,7 +175,7 @@ func (r *SkillAssetRepository) GetVersionByNumber(ctx context.Context, tenantID,
 		       spec_json, spec_yaml, spec_hash, confidence, utility,
 		       COALESCE(alpha,1), COALESCE(beta,1), COALESCE(success_count,0), COALESCE(failure_count,0),
 		       COALESCE(shadow_successes,0), COALESCE(shadow_failures,0),
-		       status, validation_status, created_at
+		       status, validation_status, created_at, embedding::text
 		FROM skill_versions
 		WHERE tenant_id = $1 AND skill_id = $2 AND version = $3
 	`, tenantID, skillID, version)
@@ -215,16 +223,24 @@ func (r *SkillAssetRepository) UpdateVersion(ctx context.Context, ver skill.Vers
 	if err != nil {
 		return skill.Version{}, err
 	}
+	var emb any
+	if len(ver.Embedding) > 0 {
+		embStr, err := formatVector(ver.Embedding)
+		if err != nil {
+			return skill.Version{}, err
+		}
+		emb = embStr
+	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE skill_versions SET
 			spec_json=$3, spec_yaml=$4, spec_hash=$5, confidence=$6, utility=$7,
 			alpha=$8, beta=$9, success_count=$10, failure_count=$11,
 			shadow_successes=$12, shadow_failures=$13,
-			status=$14, validation_status=$15
+			status=$14, validation_status=$15, embedding=$16::vector
 		WHERE tenant_id=$1 AND id=$2
 	`, ver.TenantID, ver.ID, specJSON, ver.SpecYAML, ver.SpecHash, ver.Confidence, ver.Utility,
 		ver.Alpha, ver.Beta, ver.SuccessCount, ver.FailureCount, ver.ShadowSuccesses, ver.ShadowFailures,
-		string(ver.Status), string(ver.ValidationStatus))
+		string(ver.Status), string(ver.ValidationStatus), emb)
 	if err != nil {
 		return skill.Version{}, err
 	}
@@ -282,18 +298,26 @@ func (r *SkillAssetRepository) SaveCompiled(ctx context.Context, sk skill.Skill,
 	if strings.TrimSpace(ver.PatternID) != "" {
 		pattern = ver.PatternID
 	}
+	var emb any
+	if len(ver.Embedding) > 0 {
+		embStr, err := formatVector(ver.Embedding)
+		if err != nil {
+			return skill.Skill{}, skill.Version{}, err
+		}
+		emb = embStr
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO skill_versions (
 			id, skill_id, tenant_id, version, pattern_id,
 			spec_json, spec_yaml, spec_hash, confidence, utility,
 			alpha, beta, success_count, failure_count, shadow_successes, shadow_failures,
-			status, validation_status, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			status, validation_status, created_at, embedding
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::vector)
 	`,
 		ver.ID, sk.ID, sk.TenantID, ver.Version, pattern,
 		specJSON, ver.SpecYAML, ver.SpecHash, ver.Confidence, ver.Utility,
 		ver.Alpha, ver.Beta, ver.SuccessCount, ver.FailureCount, ver.ShadowSuccesses, ver.ShadowFailures,
-		string(ver.Status), string(ver.ValidationStatus), ver.CreatedAt,
+		string(ver.Status), string(ver.ValidationStatus), ver.CreatedAt, emb,
 	)
 	if err != nil {
 		return skill.Skill{}, skill.Version{}, fmt.Errorf("insert skill version: %w", err)
@@ -437,6 +461,85 @@ func (r *SkillAssetRepository) IncrementShadowOutcome(ctx context.Context, tenan
 	return r.GetVersion(ctx, tenantID, versionID)
 }
 
+func (r *SkillAssetRepository) SearchActiveByEmbedding(ctx context.Context, tenantID string, query []float32, topK int) ([]skill.ScoredVersion, error) {
+	if len(query) == 0 {
+		return nil, skill.ErrNotSupported
+	}
+	if topK <= 0 {
+		topK = 20
+	}
+	vec, err := formatVector(query)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT s.id, s.tenant_id, s.name, s.description, s.status, s.active_version_id, s.created_at, s.updated_at,
+		       v.id, v.skill_id, v.tenant_id, v.version, COALESCE(v.pattern_id, ''),
+		       v.spec_json, v.spec_yaml, v.spec_hash, v.confidence, v.utility,
+		       COALESCE(v.alpha,1), COALESCE(v.beta,1), COALESCE(v.success_count,0), COALESCE(v.failure_count,0),
+		       COALESCE(v.shadow_successes,0), COALESCE(v.shadow_failures,0),
+		       v.status, v.validation_status, v.created_at, v.embedding::text,
+		       1 - (v.embedding <=> $2::vector) AS similarity
+		FROM skills s
+		JOIN skill_versions v ON v.id = s.active_version_id AND v.tenant_id = s.tenant_id
+		WHERE s.tenant_id = $1
+		  AND s.status = 'ACTIVE'
+		  AND v.validation_status = 'PASSED'
+		  AND v.embedding IS NOT NULL
+		ORDER BY v.embedding <=> $2::vector
+		LIMIT $3
+	`, tenantID, vec, topK)
+	if err != nil {
+		return nil, fmt.Errorf("search skill embeddings: %w", err)
+	}
+	defer rows.Close()
+	var out []skill.ScoredVersion
+	for rows.Next() {
+		var sk skill.Skill
+		var status string
+		var active sql.NullString
+		var createdAt, updatedAt time.Time
+		var ver skill.Version
+		var vStatus, validation string
+		var specJSON []byte
+		var vCreated time.Time
+		var embText sql.NullString
+		var sim float64
+		if err := rows.Scan(
+			&sk.ID, &sk.TenantID, &sk.Name, &sk.Description, &status, &active, &createdAt, &updatedAt,
+			&ver.ID, &ver.SkillID, &ver.TenantID, &ver.Version, &ver.PatternID,
+			&specJSON, &ver.SpecYAML, &ver.SpecHash, &ver.Confidence, &ver.Utility,
+			&ver.Alpha, &ver.Beta, &ver.SuccessCount, &ver.FailureCount,
+			&ver.ShadowSuccesses, &ver.ShadowFailures,
+			&vStatus, &validation, &vCreated, &embText, &sim,
+		); err != nil {
+			return nil, err
+		}
+		sk.Status = skill.Status(status)
+		if active.Valid && active.String != "" {
+			v := active.String
+			sk.ActiveVersionID = &v
+		}
+		sk.CreatedAt = createdAt
+		sk.UpdatedAt = updatedAt
+		if err := json.Unmarshal(specJSON, &ver.Spec); err != nil {
+			return nil, err
+		}
+		ver.Status = skill.VersionStatus(vStatus)
+		ver.ValidationStatus = skill.ValidationStatus(validation)
+		ver.CreatedAt = vCreated
+		if embText.Valid && strings.TrimSpace(embText.String) != "" {
+			emb, err := parseVector(embText.String)
+			if err != nil {
+				return nil, err
+			}
+			ver.Embedding = emb
+		}
+		out = append(out, skill.ScoredVersion{Skill: sk, Version: ver, Similarity: sim})
+	}
+	return out, rows.Err()
+}
+
 type skillAssetScanner interface {
 	Scan(dest ...any) error
 }
@@ -466,12 +569,13 @@ func scanSkillVersion(row skillAssetScanner) (skill.Version, error) {
 	var status, validation string
 	var specJSON []byte
 	var createdAt time.Time
+	var embText sql.NullString
 	if err := row.Scan(
 		&ver.ID, &ver.SkillID, &ver.TenantID, &ver.Version, &ver.PatternID,
 		&specJSON, &ver.SpecYAML, &ver.SpecHash, &ver.Confidence, &ver.Utility,
 		&ver.Alpha, &ver.Beta, &ver.SuccessCount, &ver.FailureCount,
 		&ver.ShadowSuccesses, &ver.ShadowFailures,
-		&status, &validation, &createdAt,
+		&status, &validation, &createdAt, &embText,
 	); err != nil {
 		return skill.Version{}, err
 	}
@@ -481,5 +585,12 @@ func scanSkillVersion(row skillAssetScanner) (skill.Version, error) {
 	ver.Status = skill.VersionStatus(status)
 	ver.ValidationStatus = skill.ValidationStatus(validation)
 	ver.CreatedAt = createdAt
+	if embText.Valid && strings.TrimSpace(embText.String) != "" {
+		emb, err := parseVector(embText.String)
+		if err != nil {
+			return skill.Version{}, fmt.Errorf("parse skill embedding: %w", err)
+		}
+		ver.Embedding = emb
+	}
 	return ver, nil
 }

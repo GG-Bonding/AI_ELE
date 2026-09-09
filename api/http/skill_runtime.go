@@ -1,8 +1,10 @@
 package httpserver
 
 import (
+	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
@@ -34,6 +36,27 @@ type retrieveSkillsRequest struct {
 	Task     string   `json:"task"`
 	Tools    []string `json:"tools"`
 	TopK     int      `json:"top_k"`
+	Select   string   `json:"select"` // empty | "thompson"
+}
+
+type reviseSkillRequest struct {
+	TenantID        string   `json:"tenant_id"`
+	SkillID         string   `json:"skill_id"`
+	VersionID       string   `json:"version_id"`
+	PatternID       string   `json:"pattern_id"`
+	FailureCodes    []string `json:"failure_codes"`
+	FailureMessages []string `json:"failure_messages"`
+	PatternContent  string   `json:"pattern_content"`
+}
+
+type abCompareRequest struct {
+	VersionAID string              `json:"version_a_id"`
+	VersionBID string              `json:"version_b_id"`
+	TrialsA    []skill.ShadowTrial `json:"trials_a"`
+	TrialsB    []skill.ShadowTrial `json:"trials_b"`
+	MinTrials  int                 `json:"min_trials"`
+	Promote    bool                `json:"promote"`
+	TenantID   string              `json:"tenant_id"`
 }
 
 type resumeSkillRequest struct {
@@ -201,12 +224,77 @@ func (s *Server) handleRetrieveSkills(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	ranked, err := skill.Retrieve(r.Context(), s.skillRepo, tools, skill.RetrieveQuery{
+	retriever := s.skillRetriever
+	if retriever == nil {
+		retriever = &skill.Retriever{Repo: s.skillRepo, Tools: tools}
+	}
+	ranked, err := retriever.Retrieve(r.Context(), skill.RetrieveQuery{
 		TenantID: req.TenantID, Task: req.Task, Tools: req.Tools, TopK: req.TopK,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"skills": ranked})
+	out := map[string]any{"skills": ranked}
+	if strings.EqualFold(strings.TrimSpace(req.Select), "thompson") {
+		picked, ok := skill.SelectThompson(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+		if ok {
+			out["selected"] = picked
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleReviseSkill(w http.ResponseWriter, r *http.Request) {
+	if s.skillRepo == nil {
+		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
+		return
+	}
+	var req reviseSkillRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	ver, err := s.skillRepo.GetVersion(r.Context(), req.TenantID, req.VersionID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	skillID := req.SkillID
+	if skillID == "" {
+		skillID = ver.SkillID
+	}
+	rev, ok, err := skill.AutoRevise(r.Context(), s.skillRepo, req.TenantID, skillID, req.PatternID, ver.Spec, skill.RevisionHint{
+		FailureCodes:    req.FailureCodes,
+		FailureMessages: req.FailureMessages,
+		PatternContent:  req.PatternContent,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revised": ok, "version": rev})
+}
+
+func (s *Server) handleCompareShadowAB(w http.ResponseWriter, r *http.Request) {
+	if s.skillRegistry == nil {
+		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
+		return
+	}
+	var req abCompareRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	result := skill.CompareShadowAB(req.VersionAID, req.VersionBID, req.TrialsA, req.TrialsB, req.MinTrials)
+	out := map[string]any{"result": result}
+	if req.Promote && result.WinnerID != "" {
+		ver, err := skill.PromoteABWinner(r.Context(), s.skillRegistry, req.TenantID, result.WinnerID, s.skillPromote)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		out["promoted"] = ver
+	}
+	writeJSON(w, http.StatusOK, out)
 }

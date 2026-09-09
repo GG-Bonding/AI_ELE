@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/provider"
 	"github.com/google/uuid"
 )
 
@@ -85,6 +86,7 @@ func ApplyValidationReport(ver Version, rep ValidationReport) Version {
 type RegistryService struct {
 	Repo      Repository
 	Validator SpecValidator
+	Embedder  provider.EmbeddingProvider // optional; V3.2 semantic retrieval
 }
 
 // CompileAndCreate parses YAML, validates, then atomically persists Skill+Version.
@@ -135,6 +137,15 @@ func (s *RegistryService) CompileAndCreate(
 	ver = ApplyValidationReport(ver, rep)
 	if rep.OK {
 		sk.Status = StatusValidated
+	}
+	if s.Embedder != nil {
+		vecs, embErr := s.Embedder.Embed(ctx, []string{EmbeddingText(sk, ver)})
+		if embErr != nil {
+			return Skill{}, Version{}, rep, fmt.Errorf("embed skill version: %w", embErr)
+		}
+		if len(vecs) > 0 {
+			ver.Embedding = vecs[0]
+		}
 	}
 
 	sk, ver, err = s.Repo.SaveCompiled(ctx, sk, ver)

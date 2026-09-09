@@ -19,4 +19,6 @@ var (
 	ErrDuplicateLearning = errors.New("duplicate skill learning event")
 	// ErrLearningNotFound is returned when a skill learning event is missing.
 	ErrLearningNotFound = errors.New("skill learning event not found")
+	// ErrNotSupported indicates an optional repository capability is unavailable.
+	ErrNotSupported = errors.New("skill operation not supported")
 )
