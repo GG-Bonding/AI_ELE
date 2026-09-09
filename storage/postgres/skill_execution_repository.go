@@ -32,10 +32,12 @@ func (r *SkillExecutionRepository) CreateExecution(ctx context.Context, ex skill
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO skill_executions (
 			id, tenant_id, episode_id, skill_id, skill_version_id, mode, status,
-			idempotency_key, inputs, outputs, error_code, error_message, started_at, completed_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			idempotency_key, inputs, outputs, error_code, error_message, started_at, completed_at,
+			step_cursor, lease_owner, lease_until, heartbeat_at, requester_id, spec_snapshot
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 	`, ex.ID, ex.TenantID, nullStr(ex.EpisodeID), ex.SkillID, ex.SkillVersionID, string(ex.Mode), string(ex.Status),
-		idem, in, out, ex.ErrorCode, ex.ErrorMessage, ex.StartedAt, ex.CompletedAt)
+		idem, in, out, ex.ErrorCode, ex.ErrorMessage, ex.StartedAt, ex.CompletedAt,
+		ex.StepCursor, ex.LeaseOwner, ex.LeaseUntil, ex.HeartbeatAt, ex.RequesterID, ex.SpecSnapshot)
 	if err != nil {
 		if strings.TrimSpace(ex.IdempotencyKey) != "" &&
 			(strings.Contains(err.Error(), "idx_skill_executions_idempotency") ||
@@ -55,9 +57,12 @@ func (r *SkillExecutionRepository) UpdateExecution(ctx context.Context, ex skill
 	out, _ := json.Marshal(ex.Outputs)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE skill_executions
-		SET status=$3, outputs=$4, error_code=$5, error_message=$6, completed_at=$7
+		SET status=$3, outputs=$4, error_code=$5, error_message=$6, completed_at=$7,
+		    step_cursor=$8, lease_owner=$9, lease_until=$10, heartbeat_at=$11,
+		    requester_id=$12, spec_snapshot=$13
 		WHERE tenant_id=$1 AND id=$2
-	`, ex.TenantID, ex.ID, string(ex.Status), out, ex.ErrorCode, ex.ErrorMessage, ex.CompletedAt)
+	`, ex.TenantID, ex.ID, string(ex.Status), out, ex.ErrorCode, ex.ErrorMessage, ex.CompletedAt,
+		ex.StepCursor, ex.LeaseOwner, ex.LeaseUntil, ex.HeartbeatAt, ex.RequesterID, ex.SpecSnapshot)
 	if err != nil {
 		return skill.Execution{}, err
 	}
@@ -71,7 +76,8 @@ func (r *SkillExecutionRepository) UpdateExecution(ctx context.Context, ex skill
 func (r *SkillExecutionRepository) GetExecution(ctx context.Context, tenantID, id string) (skill.Execution, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, COALESCE(episode_id,''), skill_id, skill_version_id, mode, status,
-		       COALESCE(idempotency_key,''), inputs, outputs, error_code, error_message, started_at, completed_at
+		       COALESCE(idempotency_key,''), inputs, outputs, error_code, error_message, started_at, completed_at,
+		       step_cursor, COALESCE(lease_owner,''), lease_until, heartbeat_at, COALESCE(requester_id,''), COALESCE(spec_snapshot,'')
 		FROM skill_executions WHERE tenant_id=$1 AND id=$2
 	`, tenantID, id)
 	return scanExecution(row)
@@ -80,7 +86,8 @@ func (r *SkillExecutionRepository) GetExecution(ctx context.Context, tenantID, i
 func (r *SkillExecutionRepository) GetExecutionByIdempotency(ctx context.Context, tenantID, key string) (skill.Execution, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, COALESCE(episode_id,''), skill_id, skill_version_id, mode, status,
-		       COALESCE(idempotency_key,''), inputs, outputs, error_code, error_message, started_at, completed_at
+		       COALESCE(idempotency_key,''), inputs, outputs, error_code, error_message, started_at, completed_at,
+		       step_cursor, COALESCE(lease_owner,''), lease_until, heartbeat_at, COALESCE(requester_id,''), COALESCE(spec_snapshot,'')
 		FROM skill_executions WHERE tenant_id=$1 AND idempotency_key=$2
 	`, tenantID, key)
 	return scanExecution(row)
@@ -122,9 +129,9 @@ func (r *SkillExecutionRepository) ListSteps(ctx context.Context, tenantID, exec
 
 func (r *SkillExecutionRepository) CreateApproval(ctx context.Context, req skill.ApprovalRequest) (skill.ApprovalRequest, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO skill_approval_requests (id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-	`, req.ID, req.TenantID, req.ExecutionID, req.SkillID, string(req.Status), req.Reason, req.CreatedAt, req.ResolvedAt)
+		INSERT INTO skill_approval_requests (id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at, requester_id, approved_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, req.ID, req.TenantID, req.ExecutionID, req.SkillID, string(req.Status), req.Reason, req.CreatedAt, req.ResolvedAt, req.RequesterID, req.ApprovedBy)
 	if err != nil {
 		return skill.ApprovalRequest{}, err
 	}
@@ -133,9 +140,9 @@ func (r *SkillExecutionRepository) CreateApproval(ctx context.Context, req skill
 
 func (r *SkillExecutionRepository) UpdateApproval(ctx context.Context, req skill.ApprovalRequest) (skill.ApprovalRequest, error) {
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE skill_approval_requests SET status=$3, reason=$4, resolved_at=$5
+		UPDATE skill_approval_requests SET status=$3, reason=$4, resolved_at=$5, approved_by=$6
 		WHERE tenant_id=$1 AND id=$2
-	`, req.TenantID, req.ID, string(req.Status), req.Reason, req.ResolvedAt)
+	`, req.TenantID, req.ID, string(req.Status), req.Reason, req.ResolvedAt, req.ApprovedBy)
 	if err != nil {
 		return skill.ApprovalRequest{}, err
 	}
@@ -148,7 +155,8 @@ func (r *SkillExecutionRepository) UpdateApproval(ctx context.Context, req skill
 
 func (r *SkillExecutionRepository) GetApproval(ctx context.Context, tenantID, id string) (skill.ApprovalRequest, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at
+		SELECT id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at,
+		       COALESCE(requester_id,''), COALESCE(approved_by,'')
 		FROM skill_approval_requests WHERE tenant_id=$1 AND id=$2
 	`, tenantID, id)
 	return scanApproval(row)
@@ -156,7 +164,8 @@ func (r *SkillExecutionRepository) GetApproval(ctx context.Context, tenantID, id
 
 func (r *SkillExecutionRepository) GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (skill.ApprovalRequest, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at
+		SELECT id, tenant_id, execution_id, skill_id, status, reason, created_at, resolved_at,
+		       COALESCE(requester_id,''), COALESCE(approved_by,'')
 		FROM skill_approval_requests
 		WHERE tenant_id=$1 AND execution_id=$2
 		ORDER BY created_at DESC
@@ -169,7 +178,8 @@ func scanApproval(row execScanner) (skill.ApprovalRequest, error) {
 	var req skill.ApprovalRequest
 	var status string
 	var resolved sql.NullTime
-	if err := row.Scan(&req.ID, &req.TenantID, &req.ExecutionID, &req.SkillID, &status, &req.Reason, &req.CreatedAt, &resolved); err != nil {
+	if err := row.Scan(&req.ID, &req.TenantID, &req.ExecutionID, &req.SkillID, &status, &req.Reason, &req.CreatedAt, &resolved,
+		&req.RequesterID, &req.ApprovedBy); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return skill.ApprovalRequest{}, skill.ErrNotFound
 		}
@@ -265,9 +275,10 @@ func scanExecution(row execScanner) (skill.Execution, error) {
 	var ex skill.Execution
 	var mode, status string
 	var inRaw, outRaw []byte
-	var completed sql.NullTime
+	var completed, leaseUntil, heartbeat sql.NullTime
 	if err := row.Scan(&ex.ID, &ex.TenantID, &ex.EpisodeID, &ex.SkillID, &ex.SkillVersionID, &mode, &status,
-		&ex.IdempotencyKey, &inRaw, &outRaw, &ex.ErrorCode, &ex.ErrorMessage, &ex.StartedAt, &completed); err != nil {
+		&ex.IdempotencyKey, &inRaw, &outRaw, &ex.ErrorCode, &ex.ErrorMessage, &ex.StartedAt, &completed,
+		&ex.StepCursor, &ex.LeaseOwner, &leaseUntil, &heartbeat, &ex.RequesterID, &ex.SpecSnapshot); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return skill.Execution{}, skill.ErrNotFound
 		}
@@ -281,7 +292,63 @@ func scanExecution(row execScanner) (skill.Execution, error) {
 		t := completed.Time
 		ex.CompletedAt = &t
 	}
+	if leaseUntil.Valid {
+		t := leaseUntil.Time
+		ex.LeaseUntil = &t
+	}
+	if heartbeat.Valid {
+		t := heartbeat.Time
+		ex.HeartbeatAt = &t
+	}
 	return ex, nil
+}
+
+// ListStaleRunning returns RUNNING executions whose lease has expired (V3.3 recovery).
+func (r *SkillExecutionRepository) ListStaleRunning(ctx context.Context, olderThan time.Time, limit int) ([]skill.Execution, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, COALESCE(episode_id,''), skill_id, skill_version_id, mode, status,
+		       COALESCE(idempotency_key,''), inputs, outputs, error_code, error_message, started_at, completed_at,
+		       step_cursor, COALESCE(lease_owner,''), lease_until, heartbeat_at, COALESCE(requester_id,''), COALESCE(spec_snapshot,'')
+		FROM skill_executions
+		WHERE status='RUNNING' AND (lease_until IS NULL OR lease_until < $1)
+		ORDER BY started_at ASC
+		LIMIT $2
+	`, olderThan, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []skill.Execution
+	for rows.Next() {
+		ex, err := scanExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
+}
+
+// ClaimExecutionLease atomically claims a stale RUNNING execution for recovery.
+func (r *SkillExecutionRepository) ClaimExecutionLease(ctx context.Context, tenantID, executionID, owner string, until time.Time) (skill.Execution, bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE skill_executions
+		SET lease_owner=$3, lease_until=$4, heartbeat_at=NOW()
+		WHERE tenant_id=$1 AND id=$2 AND status='RUNNING'
+		  AND (lease_until IS NULL OR lease_until < NOW() OR lease_owner=$3)
+	`, tenantID, executionID, owner, until)
+	if err != nil {
+		return skill.Execution{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return skill.Execution{}, false, nil
+	}
+	ex, err := r.GetExecution(ctx, tenantID, executionID)
+	return ex, true, err
 }
 
 func scanStep(row execScanner) (skill.StepExecution, error) {

@@ -82,6 +82,14 @@ type SkillRuntimeConfig struct {
 	SuspendWindow         int     `yaml:"suspend_window"`
 	SuspendMaxFailureRate float64 `yaml:"suspend_max_failure_rate"`
 	AllowMediumRiskLive   bool    `yaml:"allow_medium_risk_live"`
+
+	// V3.3 Real Tool Runtime
+	ToolProvider            string        `yaml:"tool_provider"` // simulator | mcp | http (default simulator)
+	MCPURL                  string        `yaml:"mcp_url"`
+	SelectionPolicy         string        `yaml:"selection_policy"` // greedy | thompson | epsilon_greedy
+	RequireSeparateApprover bool          `yaml:"require_separate_approver"`
+	ExecutionLeaseTTL       time.Duration `yaml:"execution_lease_ttl"`
+	RecoveryInterval        time.Duration `yaml:"recovery_interval"`
 }
 
 // Load reads YAML from path and applies environment overrides.
@@ -171,6 +179,18 @@ func (c *Config) applyDefaults() {
 	}
 	if c.SkillRuntime.SuspendMaxFailureRate == 0 {
 		c.SkillRuntime.SuspendMaxFailureRate = 0.30
+	}
+	if c.SkillRuntime.ToolProvider == "" {
+		c.SkillRuntime.ToolProvider = "simulator"
+	}
+	if c.SkillRuntime.SelectionPolicy == "" {
+		c.SkillRuntime.SelectionPolicy = "greedy"
+	}
+	if c.SkillRuntime.ExecutionLeaseTTL == 0 {
+		c.SkillRuntime.ExecutionLeaseTTL = 30 * time.Second
+	}
+	if c.SkillRuntime.RecoveryInterval == 0 {
+		c.SkillRuntime.RecoveryInterval = 15 * time.Second
 	}
 }
 

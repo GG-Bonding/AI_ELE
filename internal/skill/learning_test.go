@@ -58,7 +58,7 @@ func TestApplyFeedbackNegativeLowersUtility(t *testing.T) {
 	repo := skill.NewMemoryRepository()
 	learn := skill.NewMemoryLearningStore()
 	svc := &skill.RegistryService{
-		Repo: repo,
+		Repo:      repo,
 		Validator: validatorBridge{inner: skillvalidator.New(toolregistry.Default(), skillvalidator.Options{TenantID: "t"})},
 	}
 	_, ver, _, err := svc.CompileAndCreate(ctx, "t", "jira_safe_create_issue", "", "", jiraSafeCreateYAML, 0.9, 0.8)

@@ -61,7 +61,6 @@ func TestFeedbackHTTP(t *testing.T) {
 	}, http.StatusNotFound)
 }
 
-
 func TestFeedbackTargetHTTP(t *testing.T) {
 	t.Parallel()
 	epSvc := episode.NewService(episode.NewMemoryRepository())

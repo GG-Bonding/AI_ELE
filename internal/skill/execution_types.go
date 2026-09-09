@@ -17,13 +17,13 @@ const (
 type ExecutionStatus string
 
 const (
-	ExecPending          ExecutionStatus = "PENDING"
-	ExecRunning          ExecutionStatus = "RUNNING"
-	ExecSucceeded        ExecutionStatus = "SUCCEEDED"
-	ExecFailed           ExecutionStatus = "FAILED"
-	ExecCancelled        ExecutionStatus = "CANCELLED"
-	ExecWaitingApproval  ExecutionStatus = "WAITING_APPROVAL"
-	ExecDenied           ExecutionStatus = "DENIED"
+	ExecPending         ExecutionStatus = "PENDING"
+	ExecRunning         ExecutionStatus = "RUNNING"
+	ExecSucceeded       ExecutionStatus = "SUCCEEDED"
+	ExecFailed          ExecutionStatus = "FAILED"
+	ExecCancelled       ExecutionStatus = "CANCELLED"
+	ExecWaitingApproval ExecutionStatus = "WAITING_APPROVAL"
+	ExecDenied          ExecutionStatus = "DENIED"
 )
 
 // StepStatus is one step outcome.
@@ -54,6 +54,14 @@ type Execution struct {
 	ErrorMessage   string          `json:"error_message,omitempty"`
 	StartedAt      time.Time       `json:"started_at"`
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+
+	// Durable execution checkpoint fields (V3.3).
+	StepCursor   int        `json:"step_cursor,omitempty"` // next Spec.Steps index to run
+	LeaseOwner   string     `json:"lease_owner,omitempty"`
+	LeaseUntil   *time.Time `json:"lease_until,omitempty"`
+	HeartbeatAt  *time.Time `json:"heartbeat_at,omitempty"`
+	RequesterID  string     `json:"requester_id,omitempty"`
+	SpecSnapshot string     `json:"spec_snapshot,omitempty"` // YAML snapshot for recovery
 }
 
 // StepExecution is one tool step within an Execution.
@@ -88,6 +96,8 @@ type ApprovalRequest struct {
 	SkillID     string         `json:"skill_id"`
 	Status      ApprovalStatus `json:"status"`
 	Reason      string         `json:"reason,omitempty"`
+	RequesterID string         `json:"requester_id,omitempty"`
+	ApprovedBy  string         `json:"approved_by,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	ResolvedAt  *time.Time     `json:"resolved_at,omitempty"`
 }
@@ -120,6 +130,13 @@ type ExecutionStore interface {
 	UpdateApproval(ctx context.Context, req ApprovalRequest) (ApprovalRequest, error)
 	GetApproval(ctx context.Context, tenantID, id string) (ApprovalRequest, error)
 	GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (ApprovalRequest, error)
+}
+
+// DurableExecutionStore extends ExecutionStore with crash-recovery operations (V3.3).
+type DurableExecutionStore interface {
+	ExecutionStore
+	ListStaleRunning(ctx context.Context, olderThan time.Time, limit int) ([]Execution, error)
+	ClaimExecutionLease(ctx context.Context, tenantID, executionID, owner string, until time.Time) (Execution, bool, error)
 }
 
 // LearningStore persists skill learning events.

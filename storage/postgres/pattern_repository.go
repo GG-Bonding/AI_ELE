@@ -226,7 +226,7 @@ func (r *PatternRepository) List(ctx context.Context, filter experience.PatternL
 			args = append(args, string(st))
 			preds = append(preds, fmt.Sprintf("$%d", len(args)))
 		}
-		where = append(where, "status IN ("+strings.Join(preds, ",")+ ")")
+		where = append(where, "status IN ("+strings.Join(preds, ",")+")")
 	}
 	if len(filter.Types) > 0 {
 		preds := make([]string, 0, len(filter.Types))
@@ -234,7 +234,7 @@ func (r *PatternRepository) List(ctx context.Context, filter experience.PatternL
 			args = append(args, string(typ))
 			preds = append(preds, fmt.Sprintf("$%d", len(args)))
 		}
-		where = append(where, "type IN ("+strings.Join(preds, ",")+ ")")
+		where = append(where, "type IN ("+strings.Join(preds, ",")+")")
 	}
 	if len(filter.Scopes) > 0 {
 		preds := make([]string, 0, len(filter.Scopes))
@@ -242,7 +242,7 @@ func (r *PatternRepository) List(ctx context.Context, filter experience.PatternL
 			args = append(args, string(sc))
 			preds = append(preds, fmt.Sprintf("$%d", len(args)))
 		}
-		where = append(where, "scope IN ("+strings.Join(preds, ",")+ ")")
+		where = append(where, "scope IN ("+strings.Join(preds, ",")+")")
 	}
 	if sk := strings.TrimSpace(filter.ScopeKey); sk != "" {
 		args = append(args, sk)

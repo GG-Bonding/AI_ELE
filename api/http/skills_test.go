@@ -27,7 +27,7 @@ func TestProposeSkillHTTP(t *testing.T) {
 		Scope: experience.ScopeTool, ScopeKey: "jira",
 		Trigger: "when project key unknown", Content: "Resolve project key first.",
 		Confidence: 0.9, Utility: 0.8, SupportCount: 3,
-		Status: experience.PatternStatusActive,
+		Status:    experience.PatternStatusActive,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	})
 	if err != nil {

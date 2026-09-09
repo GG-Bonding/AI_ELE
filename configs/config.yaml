@@ -52,3 +52,8 @@ skill_runtime:
   suspend_window: 10
   suspend_max_failure_rate: 0.30
   allow_medium_risk_live: false
+  tool_provider: simulator
+  selection_policy: greedy
+  require_separate_approver: false
+  execution_lease_ttl: 30s
+  recovery_interval: 15s

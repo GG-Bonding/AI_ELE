@@ -292,3 +292,50 @@ func (m *MemoryExecutionStore) MarkLearningFailed(ctx context.Context, tenantID,
 	m.learning[k] = ev
 	return nil
 }
+
+// ListStaleRunning implements skill.DurableExecutionStore.
+func (m *MemoryExecutionStore) ListStaleRunning(ctx context.Context, olderThan time.Time, limit int) ([]skill.Execution, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []skill.Execution
+	for _, ex := range m.executions {
+		if ex.Status != skill.ExecRunning {
+			continue
+		}
+		if ex.LeaseUntil != nil && !ex.LeaseUntil.Before(olderThan) {
+			continue
+		}
+		out = append(out, ex)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ClaimExecutionLease implements skill.DurableExecutionStore.
+func (m *MemoryExecutionStore) ClaimExecutionLease(ctx context.Context, tenantID, executionID, owner string, until time.Time) (skill.Execution, bool, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := m.key(tenantID, executionID)
+	ex, ok := m.executions[k]
+	if !ok || ex.Status != skill.ExecRunning {
+		return skill.Execution{}, false, nil
+	}
+	now := m.now()
+	if ex.LeaseUntil != nil && ex.LeaseUntil.After(now) && ex.LeaseOwner != owner {
+		return skill.Execution{}, false, nil
+	}
+	ex.LeaseOwner = owner
+	ex.LeaseUntil = &until
+	ex.HeartbeatAt = &now
+	m.executions[k] = ex
+	return ex, true, nil
+}
+
+var _ skill.DurableExecutionStore = (*MemoryExecutionStore)(nil)

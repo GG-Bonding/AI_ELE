@@ -29,6 +29,7 @@ type executeSkillRequest struct {
 	Inputs         map[string]any `json:"inputs"`
 	AvailableTools []string       `json:"available_tools"`
 	IdempotencyKey string         `json:"idempotency_key"`
+	RequesterID    string         `json:"requester_id"`
 }
 
 type retrieveSkillsRequest struct {
@@ -65,8 +66,10 @@ type resumeSkillRequest struct {
 }
 
 type approvalActionRequest struct {
-	TenantID string `json:"tenant_id"`
-	Reason   string `json:"reason"`
+	TenantID   string `json:"tenant_id"`
+	Reason     string `json:"reason"`
+	ApprovedBy string `json:"approved_by"`
+	ActorID    string `json:"actor_id"`
 }
 
 func (s *Server) handleCompileSkill(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +150,7 @@ func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
 		Inputs:         req.Inputs,
 		AvailableTools: req.AvailableTools,
 		IdempotencyKey: req.IdempotencyKey,
+		RequesterID:    req.RequesterID,
 		RuntimeEnabled: true,
 	})
 	if err != nil {
@@ -184,7 +188,8 @@ func (s *Server) handleApproveSkillApproval(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	appr, err := s.skillExec.ApproveApproval(r.Context(), req.TenantID, r.PathValue("approval_id"))
+	appr, err := s.skillExec.ApproveApproval(r.Context(), req.TenantID, r.PathValue("approval_id"),
+		firstNonEmpty(req.ApprovedBy, req.ActorID), s.requireSeparateApprover)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -236,13 +241,38 @@ func (s *Server) handleRetrieveSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"skills": ranked}
-	if strings.EqualFold(strings.TrimSpace(req.Select), "thompson") {
-		picked, ok := skill.SelectThompson(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+	selectMode := strings.TrimSpace(req.Select)
+	if selectMode == "" {
+		selectMode = "policy" // use configured default SelectionPolicy
+	}
+	if strings.EqualFold(selectMode, "thompson") || strings.EqualFold(selectMode, "policy") ||
+		strings.EqualFold(selectMode, "greedy") || strings.EqualFold(selectMode, "epsilon_greedy") {
+		var picked skill.RankedSkill
+		var ok bool
+		switch strings.ToLower(selectMode) {
+		case "thompson":
+			picked, ok = skill.SelectThompson(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+		case "greedy":
+			picked, ok = skill.GreedyPolicy{}.Select(ranked, nil)
+		case "epsilon_greedy":
+			picked, ok = skill.EpsilonGreedyPolicy{Epsilon: 0.1}.Select(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+		default:
+			picked, ok = retriever.Select(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+		}
 		if ok {
 			out["selected"] = picked
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleReviseSkill(w http.ResponseWriter, r *http.Request) {

@@ -32,10 +32,10 @@ type ReplayArm struct {
 
 // CounterfactualResult is the V3.2 offline ACE estimate over matched arms.
 type CounterfactualResult struct {
-	ACEReward   float64
-	ACESteps    float64
-	PreferSkill bool
-	WithSkill   ReplayArm
+	ACEReward    float64
+	ACESteps     float64
+	PreferSkill  bool
+	WithSkill    ReplayArm
 	WithoutSkill ReplayArm
 }
 

@@ -10,7 +10,7 @@ import (
 type ExecutionRunner interface {
 	Run(ctx context.Context, req ExecutionRunRequest) (Execution, []StepExecution, error)
 	Resume(ctx context.Context, req ResumeRequest) (Execution, []StepExecution, error)
-	Approve(ctx context.Context, tenantID, approvalID string) (ApprovalRequest, error)
+	Approve(ctx context.Context, tenantID, approvalID, approvedBy string, requireSeparateApprover bool) (ApprovalRequest, error)
 	Reject(ctx context.Context, tenantID, approvalID, reason string) (ApprovalRequest, error)
 }
 
@@ -26,6 +26,7 @@ type ExecutionRunRequest struct {
 	IdempotencyKey string
 	AvailableTools []string
 	RuntimeEnabled bool
+	RequesterID    string // actor who requested execution (V3.3 approval separation)
 }
 
 // ResumeRequest continues a WAITING_APPROVAL execution after server-side approval.
@@ -48,6 +49,7 @@ type ExecuteInput struct {
 	AvailableTools []string
 	IdempotencyKey string
 	RuntimeEnabled bool
+	RequesterID    string
 }
 
 // ExecutionService enforces lifecycle ownership before any Runtime call.
@@ -113,6 +115,7 @@ func (s *ExecutionService) Execute(ctx context.Context, in ExecuteInput) (Execut
 		IdempotencyKey: strings.TrimSpace(in.IdempotencyKey),
 		AvailableTools: in.AvailableTools,
 		RuntimeEnabled: in.RuntimeEnabled,
+		RequesterID:    strings.TrimSpace(in.RequesterID),
 	})
 	if err != nil {
 		return ex, steps, err
@@ -169,11 +172,11 @@ func (s *ExecutionService) Resume(ctx context.Context, tenantID, executionID str
 }
 
 // ApproveApproval marks a persisted approval APPROVED (server-side only).
-func (s *ExecutionService) ApproveApproval(ctx context.Context, tenantID, approvalID string) (ApprovalRequest, error) {
+func (s *ExecutionService) ApproveApproval(ctx context.Context, tenantID, approvalID, approvedBy string, requireSeparate bool) (ApprovalRequest, error) {
 	if s == nil || s.Runner == nil {
 		return ApprovalRequest{}, fmt.Errorf("%w: execution service not configured", ErrInvalidInput)
 	}
-	return s.Runner.Approve(ctx, tenantID, approvalID)
+	return s.Runner.Approve(ctx, tenantID, approvalID, approvedBy, requireSeparate)
 }
 
 // RejectApproval marks a persisted approval REJECTED.

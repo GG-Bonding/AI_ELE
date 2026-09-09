@@ -12,10 +12,10 @@ import (
 // MemoryRepository is an in-memory Skill store for tests.
 type MemoryRepository struct {
 	mu       sync.Mutex
-	skills   map[string]Skill            // tenant|id
-	byName   map[string]string           // tenant|name → id
-	versions map[string]Version          // tenant|id
-	byNum    map[string]string           // tenant|skill|version → id
+	skills   map[string]Skill   // tenant|id
+	byName   map[string]string  // tenant|name → id
+	versions map[string]Version // tenant|id
+	byNum    map[string]string  // tenant|skill|version → id
 	now      func() time.Time
 	idSeq    int
 }

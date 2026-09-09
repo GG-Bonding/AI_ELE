@@ -127,3 +127,12 @@ go test ./internal/eval/ -run TestReplayJiraCounterfactualPrefersSkill -v
 ```
 
 Expected: `PreferSkill=true`, positive `ACEReward` (skill succeeds where tip-only fails).
+
+## V3.3 Provider-path Replay
+
+Same ACE check but routed through `toolprovider.Router` + simulator provider:
+
+```bash
+go test ./internal/replay/ -run TestJiraReplayEnvironmentPrefersSkill -v
+go test ./internal/skillexec/ -run TestRecoveryContinuesFromStepCursor -v
+```

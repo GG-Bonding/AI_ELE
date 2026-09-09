@@ -52,3 +52,10 @@ skill_runtime:
   suspend_window: 10
   suspend_max_failure_rate: 0.30
   allow_medium_risk_live: false
+  # V3.3 Real Tool Runtime
+  tool_provider: simulator # simulator | mcp
+  mcp_url: ""
+  selection_policy: greedy # greedy | thompson | epsilon_greedy
+  require_separate_approver: false
+  execution_lease_ttl: 30s
+  recovery_interval: 15s

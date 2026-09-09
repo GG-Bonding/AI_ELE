@@ -30,11 +30,11 @@ func (a *LearningEventApplier) ApplyPendingEvent(ctx context.Context, tenantID s
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		status          string
+		status           string
 		normalizedReward float64
-		confidence      float64
-		credit          float64
-		experienceID    string
+		confidence       float64
+		credit           float64
+		experienceID     string
 	)
 	err = tx.QueryRowContext(ctx, `
 		SELECT status, normalized_reward, confidence, credit, experience_id

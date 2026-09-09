@@ -10,6 +10,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 // Runtime executes Skill Specs in SHADOW or LIVE mode behind a policy gate.
@@ -22,6 +23,10 @@ type Runtime struct {
 	IDs     func() string
 	Now     func() time.Time
 	Sleep   func(ctx context.Context, d time.Duration) error // injectable for tests
+
+	// Durable execution (V3.3).
+	LeaseOwner string
+	LeaseTTL   time.Duration // default 30s
 }
 
 // Run executes a Skill under policy, budget, and template resolution.
@@ -74,6 +79,8 @@ func (r *Runtime) Run(ctx context.Context, req skill.ExecutionRunRequest) (skill
 		IdempotencyKey: req.IdempotencyKey,
 		Inputs:         req.Inputs,
 		StartedAt:      started,
+		RequesterID:    req.RequesterID,
+		SpecSnapshot:   snapshotSpec(req.Spec),
 	}
 	ex, err = r.createExecutionIdempotent(ctx, ex)
 	if err != nil {
@@ -103,6 +110,7 @@ func (r *Runtime) Run(ctx context.Context, req skill.ExecutionRunRequest) (skill
 			SkillID:     req.SkillID,
 			Status:      skill.ApprovalPending,
 			Reason:      reason,
+			RequesterID: req.RequesterID,
 			CreatedAt:   nowFn(),
 		})
 		return ex, nil, nil
@@ -180,7 +188,8 @@ func (r *Runtime) Resume(ctx context.Context, req skill.ResumeRequest) (skill.Ex
 }
 
 // Approve marks a PENDING approval APPROVED (server-side workflow).
-func (r *Runtime) Approve(ctx context.Context, tenantID, approvalID string) (skill.ApprovalRequest, error) {
+// approvedBy is recorded; when requireSeparateApprover is true, must differ from requester.
+func (r *Runtime) Approve(ctx context.Context, tenantID, approvalID, approvedBy string, requireSeparateApprover bool) (skill.ApprovalRequest, error) {
 	if r == nil || r.Store == nil {
 		return skill.ApprovalRequest{}, fmt.Errorf("skillruntime: Store required")
 	}
@@ -191,8 +200,19 @@ func (r *Runtime) Approve(ctx context.Context, tenantID, approvalID string) (ski
 	if appr.Status != skill.ApprovalPending {
 		return skill.ApprovalRequest{}, fmt.Errorf("%w: approval is %s", skill.ErrInvalidTransition, appr.Status)
 	}
+	approvedBy = strings.TrimSpace(approvedBy)
+	if requireSeparateApprover {
+		reqID := strings.TrimSpace(appr.RequesterID)
+		if reqID == "" || approvedBy == "" {
+			return skill.ApprovalRequest{}, fmt.Errorf("%w: requester and approver identities are required", skill.ErrInvalidInput)
+		}
+		if reqID == approvedBy {
+			return skill.ApprovalRequest{}, fmt.Errorf("%w: approver must differ from requester", skill.ErrInvalidInput)
+		}
+	}
 	now := r.now()()
 	appr.Status = skill.ApprovalApproved
+	appr.ApprovedBy = approvedBy
 	appr.ResolvedAt = &now
 	return r.Store.UpdateApproval(ctx, appr)
 }
@@ -249,6 +269,7 @@ func (r *Runtime) runSteps(
 
 	ex.Status = skill.ExecRunning
 	var err error
+	ex = r.touchLease(ex, nowFn)
 	ex, err = r.Store.UpdateExecution(runCtx, ex)
 	if err != nil {
 		return ex, nil, err
@@ -259,13 +280,32 @@ func (r *Runtime) runSteps(
 		bindings[k] = v
 	}
 
+	existingSteps, _ := r.Store.ListSteps(runCtx, ex.TenantID, ex.ID)
+	startIdx := ex.StepCursor
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	// Rebuild bindings from completed steps when recovering mid-execution.
+	capHint := len(spec.Steps)
+	if len(existingSteps) > capHint {
+		capHint = len(existingSteps)
+	}
+	steps := make([]skill.StepExecution, 0, capHint)
+	if startIdx > 0 && len(existingSteps) > 0 {
+		steps = append(steps, existingSteps...)
+		rebuildBindings(spec, existingSteps, bindings)
+	}
+
 	for _, pre := range spec.Preconditions {
+		if startIdx > 0 {
+			break // already passed on original run
+		}
 		ok, evalErr := EvalCondition(pre.Expr, bindings)
 		if evalErr != nil {
-			return r.failExecution(runCtx, ex, nil, "PRECONDITION_ERROR", evalErr.Error(), nowFn)
+			return r.failExecution(runCtx, ex, steps, "PRECONDITION_ERROR", evalErr.Error(), nowFn)
 		}
 		if !ok {
-			return r.failExecution(runCtx, ex, nil, "PRECONDITION_FAILED", "precondition not met: "+pre.Expr, nowFn)
+			return r.failExecution(runCtx, ex, steps, "PRECONDITION_FAILED", "precondition not met: "+pre.Expr, nowFn)
 		}
 	}
 
@@ -277,9 +317,8 @@ func (r *Runtime) runSteps(
 		maxSteps = len(spec.Steps)
 	}
 
-	steps := make([]skill.StepExecution, 0, maxSteps)
-	seq := 0
-	for i := 0; i < maxSteps; i++ {
+	seq := len(steps)
+	for i := startIdx; i < maxSteps; i++ {
 		if err := runCtx.Err(); err != nil {
 			code := "CANCELLED"
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -302,6 +341,9 @@ func (r *Runtime) runSteps(
 				}
 				step, _ = r.Store.CreateStep(runCtx, step)
 				steps = append(steps, step)
+				ex.StepCursor = i + 1
+				ex = r.touchLease(ex, nowFn)
+				ex, _ = r.Store.UpdateExecution(runCtx, ex)
 				continue
 			}
 		}
@@ -325,6 +367,9 @@ func (r *Runtime) runSteps(
 				onError = strings.ToLower(strings.TrimSpace(st.OnError.Action))
 			}
 			if onError == "continue" {
+				ex.StepCursor = i + 1
+				ex = r.touchLease(ex, nowFn)
+				ex, _ = r.Store.UpdateExecution(runCtx, ex)
 				continue
 			}
 			return r.failExecution(runCtx, ex, steps, "TEMPLATE_ERROR", resolveErr.Error(), nowFn)
@@ -348,7 +393,11 @@ func (r *Runtime) runSteps(
 		var result ToolResult
 		var callErr error
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			result, callErr = r.invokeTool(runCtx, tools, st.Tool, resolved, shadow)
+			result, callErr = r.invokeTool(runCtx, tools, ToolCall{
+				Tool: st.Tool, Input: resolved,
+				IdempotencyKey: toolIdemKey(ex.ID, st.ID, attempt),
+				TenantID:       ex.TenantID, ExecutionID: ex.ID, StepID: st.ID, Attempt: attempt,
+			}, shadow)
 			if callErr == nil && result.OK {
 				break
 			}
@@ -376,6 +425,9 @@ func (r *Runtime) runSteps(
 			step, _ = r.Store.CreateStep(runCtx, step)
 			steps = append(steps, step)
 			if onError == "continue" {
+				ex.StepCursor = i + 1
+				ex = r.touchLease(ex, nowFn)
+				ex, _ = r.Store.UpdateExecution(runCtx, ex)
 				continue
 			}
 			return r.failExecution(runCtx, ex, steps, step.ErrorCode, callErr.Error(), nowFn)
@@ -389,6 +441,9 @@ func (r *Runtime) runSteps(
 			step, _ = r.Store.CreateStep(runCtx, step)
 			steps = append(steps, step)
 			if onError == "continue" {
+				ex.StepCursor = i + 1
+				ex = r.touchLease(ex, nowFn)
+				ex, _ = r.Store.UpdateExecution(runCtx, ex)
 				continue
 			}
 			return r.failExecution(runCtx, ex, steps, step.ErrorCode, "tool call failed", nowFn)
@@ -411,6 +466,12 @@ func (r *Runtime) runSteps(
 		if st.SaveAs != "" {
 			bindings[st.SaveAs] = result.Output
 		}
+		ex.StepCursor = i + 1
+		ex = r.touchLease(ex, nowFn)
+		ex, err = r.Store.UpdateExecution(runCtx, ex)
+		if err != nil {
+			return ex, steps, err
+		}
 	}
 
 	completed := nowFn()
@@ -418,23 +479,116 @@ func (r *Runtime) runSteps(
 	ex.CompletedAt = &completed
 	ex.ErrorCode = ""
 	ex.ErrorMessage = ""
+	ex.LeaseOwner = ""
+	ex.LeaseUntil = nil
 	ex.Outputs = extractOutputs(spec, bindings)
 	ex, err = r.Store.UpdateExecution(runCtx, ex)
 	return ex, steps, err
 }
 
-func (r *Runtime) invokeTool(ctx context.Context, tools *toolregistry.Registry, tool string, input map[string]any, shadow bool) (ToolResult, error) {
+func (r *Runtime) invokeTool(ctx context.Context, tools *toolregistry.Registry, call ToolCall, shadow bool) (ToolResult, error) {
 	sideEffect := false
-	if def, ok := tools.Get(tool); ok {
+	if def, ok := tools.Get(call.Tool); ok {
 		sideEffect = def.SideEffect
 	}
 	if shadow && sideEffect {
 		if r.Preview == nil {
 			return ToolResult{}, ErrShadowUnsupported
 		}
-		return r.Preview.Preview(ctx, tool, input)
+		if p, ok := r.Preview.(CallAwarePreviewer); ok {
+			return p.PreviewToolCall(ctx, call)
+		}
+		return r.Preview.Preview(ctx, call.Tool, call.Input)
 	}
-	return r.Exec.Execute(ctx, tool, input)
+	if e, ok := r.Exec.(CallAwareExecutor); ok {
+		return e.ExecuteToolCall(ctx, call)
+	}
+	return r.Exec.Execute(ctx, call.Tool, call.Input)
+}
+
+func (r *Runtime) touchLease(ex skill.Execution, nowFn func() time.Time) skill.Execution {
+	now := nowFn()
+	ttl := r.LeaseTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	until := now.Add(ttl)
+	ex.HeartbeatAt = &now
+	ex.LeaseUntil = &until
+	if r.LeaseOwner != "" {
+		ex.LeaseOwner = r.LeaseOwner
+	} else if ex.LeaseOwner == "" {
+		ex.LeaseOwner = "runtime"
+	}
+	return ex
+}
+
+// Recover continues a RUNNING execution from its step_cursor using SpecSnapshot or provided Spec.
+func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spec skill.Spec) (skill.Execution, []skill.StepExecution, error) {
+	if r == nil || r.Store == nil || r.Exec == nil {
+		return skill.Execution{}, nil, fmt.Errorf("skillruntime: Runtime requires Store and Exec")
+	}
+	ex, err := r.Store.GetExecution(ctx, tenantID, executionID)
+	if err != nil {
+		return skill.Execution{}, nil, err
+	}
+	if ex.Status != skill.ExecRunning && ex.Status != skill.ExecPending {
+		steps, listErr := r.Store.ListSteps(ctx, tenantID, executionID)
+		return ex, steps, listErr
+	}
+	if len(spec.Steps) == 0 && ex.SpecSnapshot != "" {
+		parsed, parseErr := skill.ParseYAML(ex.SpecSnapshot)
+		if parseErr != nil {
+			return ex, nil, parseErr
+		}
+		spec = parsed
+	}
+	if len(spec.Steps) == 0 {
+		return ex, nil, fmt.Errorf("%w: missing spec for recovery", skill.ErrInvalidInput)
+	}
+	nowFn := r.now()
+	ids := r.ids()
+	tools := r.tools()
+	ex = r.touchLease(ex, nowFn)
+	ex, err = r.Store.UpdateExecution(ctx, ex)
+	if err != nil {
+		return ex, nil, err
+	}
+	return r.runSteps(ctx, ex, spec, ex.Inputs, ex.Mode == skill.ModeShadow, nowFn, ids, tools)
+}
+
+func toolIdemKey(executionID, stepID string, attempt int) string {
+	if attempt <= 0 {
+		attempt = 1
+	}
+	return fmt.Sprintf("%s:%s:%d", executionID, stepID, attempt)
+}
+
+func snapshotSpec(spec skill.Spec) string {
+	raw, err := yaml.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func rebuildBindings(spec skill.Spec, steps []skill.StepExecution, bindings map[string]any) {
+	byID := map[string]skill.StepExecution{}
+	for _, st := range steps {
+		byID[st.StepID] = st
+	}
+	for _, st := range spec.Steps {
+		if st.SaveAs == "" {
+			continue
+		}
+		got, ok := byID[st.ID]
+		if !ok {
+			continue
+		}
+		if got.Status == skill.StepSucceeded || got.Status == skill.StepShadowed {
+			bindings[st.SaveAs] = got.Output
+		}
+	}
 }
 
 func (r *Runtime) createExecutionIdempotent(ctx context.Context, ex skill.Execution) (skill.Execution, error) {

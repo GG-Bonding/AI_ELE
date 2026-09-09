@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sort"
 	"strings"
 
@@ -41,6 +42,7 @@ type Retriever struct {
 	Repo     Repository
 	Tools    *toolregistry.Registry
 	Embedder provider.EmbeddingProvider // optional
+	Policy   SelectionPolicy            // optional; default greedy when selecting
 }
 
 // Retrieve ranks ACTIVE skills by sim×util×conf×validity×validation×availability.
@@ -156,6 +158,15 @@ func (r *Retriever) Retrieve(ctx context.Context, q RetrieveQuery) ([]RankedSkil
 		ranked = ranked[:topK]
 	}
 	return ranked, nil
+}
+
+// Select applies the configured SelectionPolicy (default greedy) to ranked skills.
+func (r *Retriever) Select(ranked []RankedSkill, rng *rand.Rand) (RankedSkill, bool) {
+	policy := r.Policy
+	if policy == nil {
+		policy = GreedyPolicy{}
+	}
+	return policy.Select(ranked, rng)
 }
 
 func lexicalSkillSim(task string, sk Skill, ver Version) float64 {

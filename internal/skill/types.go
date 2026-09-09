@@ -79,11 +79,11 @@ func (v ValidationStatus) Valid() bool {
 type Risk string
 
 const (
-	RiskReadOnly  Risk = "READ_ONLY"
-	RiskLow       Risk = "LOW"
-	RiskMedium    Risk = "MEDIUM"
-	RiskHigh      Risk = "HIGH"
-	RiskCritical  Risk = "CRITICAL"
+	RiskReadOnly Risk = "READ_ONLY"
+	RiskLow      Risk = "LOW"
+	RiskMedium   Risk = "MEDIUM"
+	RiskHigh     Risk = "HIGH"
+	RiskCritical Risk = "CRITICAL"
 )
 
 // Valid reports whether r is a known risk level.
@@ -132,8 +132,8 @@ type Condition struct {
 
 // RetryPolicy controls per-step retries (runtime honors later).
 type RetryPolicy struct {
-	MaxAttempts int           `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
-	BackoffMs   int           `json:"backoff_ms,omitempty" yaml:"backoff_ms,omitempty"`
+	MaxAttempts int `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
+	BackoffMs   int `json:"backoff_ms,omitempty" yaml:"backoff_ms,omitempty"`
 }
 
 // ErrorPolicy controls failure handling for a step.
@@ -144,9 +144,9 @@ type ErrorPolicy struct {
 
 // SkillRisk summarizes aggregate risk for a skill.
 type SkillRisk struct {
-	Level       Risk   `json:"level" yaml:"level"`
-	RequiresApproval bool `json:"requires_approval,omitempty" yaml:"requires_approval,omitempty"`
-	Notes       string `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Level            Risk   `json:"level" yaml:"level"`
+	RequiresApproval bool   `json:"requires_approval,omitempty" yaml:"requires_approval,omitempty"`
+	Notes            string `json:"notes,omitempty" yaml:"notes,omitempty"`
 }
 
 // SkillStep is one tool invocation in a declarative workflow.
@@ -163,9 +163,9 @@ type SkillStep struct {
 // Spec is the executable Skill contract (internal IR — not YAML).
 // YAML is only a serialization format; Runtime must consume Spec / NormalizedIR.
 type Spec struct {
-	Name        string                 `json:"name" yaml:"name"`
-	Description string                 `json:"description,omitempty" yaml:"description,omitempty"`
-	Version     int64                  `json:"version,omitempty" yaml:"version,omitempty"`
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Version     int64  `json:"version,omitempty" yaml:"version,omitempty"`
 
 	Inputs  map[string]FieldSchema `json:"inputs,omitempty" yaml:"inputs,omitempty"`
 	Outputs map[string]FieldSchema `json:"outputs,omitempty" yaml:"outputs,omitempty"`
@@ -182,11 +182,11 @@ type Spec struct {
 
 // Skill is the logical Skill entity (stable id across immutable versions).
 type Skill struct {
-	ID          string  `json:"id"`
-	TenantID    string  `json:"tenant_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Status      Status  `json:"status"`
+	ID              string  `json:"id"`
+	TenantID        string  `json:"tenant_id"`
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	Status          Status  `json:"status"`
 	ActiveVersionID *string `json:"active_version_id,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -195,10 +195,10 @@ type Skill struct {
 
 // Version is an immutable compiled SkillSpec revision.
 type Version struct {
-	ID      string `json:"id"`
-	SkillID string `json:"skill_id"`
+	ID       string `json:"id"`
+	SkillID  string `json:"skill_id"`
 	TenantID string `json:"tenant_id"`
-	Version int64  `json:"version"`
+	Version  int64  `json:"version"`
 
 	PatternID string `json:"pattern_id,omitempty"`
 
@@ -209,14 +209,14 @@ type Version struct {
 	// SpecHash is a stable hash of the normalized Spec JSON (content-addressed).
 	SpecHash string `json:"spec_hash"`
 
-	Confidence float64 `json:"confidence"`
-	Utility    float64 `json:"utility"`
-	Alpha      float64 `json:"alpha,omitempty"`
-	Beta       float64 `json:"beta,omitempty"`
-	SuccessCount int   `json:"success_count,omitempty"`
-	FailureCount int   `json:"failure_count,omitempty"`
-	ShadowSuccesses int `json:"shadow_successes,omitempty"`
-	ShadowFailures  int `json:"shadow_failures,omitempty"`
+	Confidence      float64 `json:"confidence"`
+	Utility         float64 `json:"utility"`
+	Alpha           float64 `json:"alpha,omitempty"`
+	Beta            float64 `json:"beta,omitempty"`
+	SuccessCount    int     `json:"success_count,omitempty"`
+	FailureCount    int     `json:"failure_count,omitempty"`
+	ShadowSuccesses int     `json:"shadow_successes,omitempty"`
+	ShadowFailures  int     `json:"shadow_failures,omitempty"`
 
 	Status           VersionStatus    `json:"status"`
 	ValidationStatus ValidationStatus `json:"validation_status"`

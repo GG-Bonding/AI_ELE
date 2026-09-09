@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,8 +30,13 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skillexec"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillvalidator"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/toolprovider"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/toolprovider/credential"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/toolprovider/mcp"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/toolprovider/simulator"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
 )
@@ -248,13 +254,35 @@ func run() error {
 		skillAssetRepo := postgres.NewSkillAssetRepository(db)
 		execRepo := postgres.NewSkillExecutionRepository(db)
 		validator := skillvalidator.Adapt(skillvalidator.New(tools, skillvalidator.Options{}))
-		jiraExec := &skillruntime.JiraSimExecutor{Sim: jirasim.New(), Registry: tools}
+
+		var providers []toolprovider.Provider
+		switch strings.ToLower(strings.TrimSpace(cfg.SkillRuntime.ToolProvider)) {
+		case "mcp":
+			if strings.TrimSpace(cfg.SkillRuntime.MCPURL) == "" {
+				return fmt.Errorf("skill_runtime.mcp_url is required when tool_provider=mcp")
+			}
+			mcpProv, err := mcp.New(mcp.Config{BaseURL: cfg.SkillRuntime.MCPURL})
+			if err != nil {
+				return fmt.Errorf("init mcp tool provider: %w", err)
+			}
+			providers = append(providers, mcpProv)
+			// Keep simulator tools for local jira.* skills unless MCP replaces them.
+			providers = append(providers, &simulator.JiraProvider{Sim: jirasim.New(), Registry: tools})
+		default:
+			providers = append(providers, &simulator.JiraProvider{Sim: jirasim.New(), Registry: tools})
+		}
+		creds := credential.Chain{credential.EnvResolver{}}
+		router := toolprovider.NewRouter(providers, tools, creds)
+		if err := router.SyncRegistry(context.Background()); err != nil {
+			return fmt.Errorf("sync tool providers: %w", err)
+		}
+
 		rt := &skillruntime.Runtime{
-			Tools:   tools,
-			Exec:    jiraExec,
-			Preview: jiraExec,
-			Policy:  skillruntime.DefaultPolicy{AllowMedium: cfg.SkillRuntime.AllowMediumRiskLive},
-			Store:   execRepo,
+			Tools: tools, Exec: router, Preview: router,
+			Policy:     skillruntime.DefaultPolicy{AllowMedium: cfg.SkillRuntime.AllowMediumRiskLive},
+			Store:      execRepo,
+			LeaseOwner: "server",
+			LeaseTTL:   cfg.SkillRuntime.ExecutionLeaseTTL,
 		}
 		registry := &skill.RegistryService{Repo: skillAssetRepo, Validator: validator, Embedder: skillEmbedder}
 		promote := skill.PromoteConfig{
@@ -270,6 +298,7 @@ func run() error {
 		opts.SkillRegistry = registry
 		opts.SkillRuntime = rt
 		opts.SkillPromote = promote
+		opts.RequireSeparateApprover = cfg.SkillRuntime.RequireSeparateApprover
 		opts.SkillExec = &skill.ExecutionService{
 			Repo:     skillAssetRepo,
 			Store:    execRepo,
@@ -277,8 +306,24 @@ func run() error {
 			Registry: registry,
 			Promote:  promote,
 		}
-		opts.SkillRetriever = &skill.Retriever{Repo: skillAssetRepo, Tools: tools, Embedder: skillEmbedder}
-		logger.Info("skill runtime feature gate enabled (V3)", "semantic_retrieve", skillEmbedder != nil)
+		opts.SkillRetriever = &skill.Retriever{
+			Repo: skillAssetRepo, Tools: tools, Embedder: skillEmbedder,
+			Policy: skill.ParseSelectionPolicy(cfg.SkillRuntime.SelectionPolicy),
+		}
+		recovery := &skillexec.RecoveryWorker{
+			Store: execRepo, Runtime: rt, Owner: "server-recovery",
+			LeaseTTL: cfg.SkillRuntime.ExecutionLeaseTTL, Logger: logger,
+		}
+		if n, err := recovery.RecoverOnce(context.Background(), 50); err != nil {
+			return fmt.Errorf("recover stale skill executions: %w", err)
+		} else if n > 0 {
+			logger.Info("recovered stale skill executions", "count", n)
+		}
+		go recovery.RunLoop(workerCtx, cfg.SkillRuntime.RecoveryInterval)
+		logger.Info("skill runtime feature gate enabled (V3.3)",
+			"tool_provider", cfg.SkillRuntime.ToolProvider,
+			"selection_policy", cfg.SkillRuntime.SelectionPolicy,
+			"semantic_retrieve", skillEmbedder != nil)
 	} else {
 		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")
 	}

@@ -80,9 +80,9 @@ max_steps: 3
 		t.Fatalf("compile: %#v err=%v", rep, err)
 	}
 	rev, ok, err := skill.AutoRevise(ctx, repo, "t", sk.ID, "pat", ver.Spec, skill.RevisionHint{
-		FailureCodes:   []string{"INVALID_PROJECT_KEY"},
+		FailureCodes:    []string{"INVALID_PROJECT_KEY"},
 		FailureMessages: []string{"unknown project key Payment"},
-		PatternContent: "resolve project key with search before create",
+		PatternContent:  "resolve project key with search before create",
 	})
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)

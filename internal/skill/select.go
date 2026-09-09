@@ -16,8 +16,8 @@ func SelectThompson(ranked []RankedSkill, rng *rand.Rand) (RankedSkill, bool) {
 		rng = rand.New(rand.NewSource(1))
 	}
 	type cand struct {
-		r     RankedSkill
-		draw  float64
+		r    RankedSkill
+		draw float64
 	}
 	var best cand
 	found := false

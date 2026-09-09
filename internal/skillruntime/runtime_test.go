@@ -150,7 +150,7 @@ func TestHighRiskRequiresApprovalThenResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Approve(context.Background(), "t1", appr.ID); err != nil {
+	if _, err := rt.Approve(context.Background(), "t1", appr.ID, "approver-1", false); err != nil {
 		t.Fatal(err)
 	}
 	ex2, steps2, err := rt.Resume(context.Background(), skill.ResumeRequest{

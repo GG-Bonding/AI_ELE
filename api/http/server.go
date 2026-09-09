@@ -109,26 +109,27 @@ type ActionService interface {
 
 // Server is the HTTP API surface.
 type Server struct {
-	logger         *slog.Logger
-	ready          ReadyChecker
-	episodes       EpisodeService
-	extractor      ExperienceExtractor
-	experiences    ExperienceService
-	retriever      ExperienceRetriever
-	storePipeline  ExperienceStorePipeline
-	learning       EpisodeLearningProcessor
-	contexts       ContextService
-	feedbacks      FeedbackService
-	actions        ActionService
-	patternRewards PatternRewardService
-	skillRegistry  *skill.RegistryService
-	skillRuntime   *skillruntime.Runtime
-	skillExec      *skill.ExecutionService
-	skillRepo      skill.Repository
-	toolRegistry   *toolregistry.Registry
-	skillPromote   skill.PromoteConfig
-	skillRetriever *skill.Retriever
-	mux            *http.ServeMux
+	logger                  *slog.Logger
+	ready                   ReadyChecker
+	episodes                EpisodeService
+	extractor               ExperienceExtractor
+	experiences             ExperienceService
+	retriever               ExperienceRetriever
+	storePipeline           ExperienceStorePipeline
+	learning                EpisodeLearningProcessor
+	contexts                ContextService
+	feedbacks               FeedbackService
+	actions                 ActionService
+	patternRewards          PatternRewardService
+	skillRegistry           *skill.RegistryService
+	skillRuntime            *skillruntime.Runtime
+	skillExec               *skill.ExecutionService
+	skillRepo               skill.Repository
+	toolRegistry            *toolregistry.Registry
+	skillPromote            skill.PromoteConfig
+	skillRetriever          *skill.Retriever
+	requireSeparateApprover bool
+	mux                     *http.ServeMux
 }
 
 // Options configures optional server dependencies.
@@ -145,38 +146,40 @@ type Options struct {
 	PatternRewards PatternRewardService
 
 	// V3 skill runtime (nil when skill_runtime.enabled=false).
-	SkillRegistry  *skill.RegistryService
-	SkillRuntime   *skillruntime.Runtime
-	SkillExec      *skill.ExecutionService
-	SkillRepo      skill.Repository
-	ToolRegistry   *toolregistry.Registry
-	SkillPromote   skill.PromoteConfig
-	SkillRetriever *skill.Retriever
+	SkillRegistry           *skill.RegistryService
+	SkillRuntime            *skillruntime.Runtime
+	SkillExec               *skill.ExecutionService
+	SkillRepo               skill.Repository
+	ToolRegistry            *toolregistry.Registry
+	SkillPromote            skill.PromoteConfig
+	SkillRetriever          *skill.Retriever
+	RequireSeparateApprover bool
 }
 
 // New constructs an HTTP server with health and episode endpoints.
 func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 	s := &Server{
-		logger:         logger,
-		ready:          ready,
-		episodes:       opts.Episodes,
-		extractor:      opts.Extractor,
-		experiences:    opts.Experiences,
-		retriever:      opts.Retriever,
-		storePipeline:  opts.StorePipeline,
-		learning:       opts.Learning,
-		contexts:       opts.Contexts,
-		feedbacks:      opts.Feedbacks,
-		actions:        opts.Actions,
-		patternRewards: opts.PatternRewards,
-		skillRegistry:  opts.SkillRegistry,
-		skillRuntime:   opts.SkillRuntime,
-		skillExec:      opts.SkillExec,
-		skillRepo:      opts.SkillRepo,
-		toolRegistry:   opts.ToolRegistry,
-		skillPromote:   opts.SkillPromote,
-		skillRetriever: opts.SkillRetriever,
-		mux:            http.NewServeMux(),
+		logger:                  logger,
+		ready:                   ready,
+		episodes:                opts.Episodes,
+		extractor:               opts.Extractor,
+		experiences:             opts.Experiences,
+		retriever:               opts.Retriever,
+		storePipeline:           opts.StorePipeline,
+		learning:                opts.Learning,
+		contexts:                opts.Contexts,
+		feedbacks:               opts.Feedbacks,
+		actions:                 opts.Actions,
+		patternRewards:          opts.PatternRewards,
+		skillRegistry:           opts.SkillRegistry,
+		skillRuntime:            opts.SkillRuntime,
+		skillExec:               opts.SkillExec,
+		skillRepo:               opts.SkillRepo,
+		toolRegistry:            opts.ToolRegistry,
+		skillPromote:            opts.SkillPromote,
+		skillRetriever:          opts.SkillRetriever,
+		requireSeparateApprover: opts.RequireSeparateApprover,
+		mux:                     http.NewServeMux(),
 	}
 	s.routes()
 	return s

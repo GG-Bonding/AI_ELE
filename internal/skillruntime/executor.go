@@ -15,15 +15,36 @@ type ToolResult struct {
 	Output    map[string]any
 }
 
+// ToolCall carries durable-execution / credential metadata for one tool invoke (V3.3).
+type ToolCall struct {
+	Tool           string
+	Input          map[string]any
+	IdempotencyKey string
+	TenantID       string
+	ExecutionID    string
+	StepID         string
+	Attempt        int
+}
+
 // ToolExecutor invokes registered tools for LIVE (and READ_ONLY shadow) steps.
 type ToolExecutor interface {
 	Execute(ctx context.Context, tool string, input map[string]any) (ToolResult, error)
+}
+
+// CallAwareExecutor optionally receives idempotency / execution context (V3.3).
+type CallAwareExecutor interface {
+	ExecuteToolCall(ctx context.Context, call ToolCall) (ToolResult, error)
 }
 
 // PreviewExecutor dry-runs side-effect tools for SHADOW mode.
 // Runtime never calls ToolExecutor.Execute for side-effect tools while shadowing.
 type PreviewExecutor interface {
 	Preview(ctx context.Context, tool string, input map[string]any) (ToolResult, error)
+}
+
+// CallAwarePreviewer optionally receives idempotency context for shadow (V3.3).
+type CallAwarePreviewer interface {
+	PreviewToolCall(ctx context.Context, call ToolCall) (ToolResult, error)
 }
 
 // ErrShadowUnsupported means a side-effect tool cannot be safely shadowed.
@@ -39,6 +60,11 @@ type JiraSimExecutor struct {
 func (e *JiraSimExecutor) Execute(ctx context.Context, tool string, input map[string]any) (ToolResult, error) {
 	_ = ctx
 	return e.call(tool, input)
+}
+
+// ExecuteToolCall implements CallAwareExecutor.
+func (e *JiraSimExecutor) ExecuteToolCall(ctx context.Context, call ToolCall) (ToolResult, error) {
+	return e.Execute(ctx, call.Tool, call.Input)
 }
 
 // Preview implements PreviewExecutor for side-effect tools (no real write).
@@ -57,6 +83,11 @@ func (e *JiraSimExecutor) Preview(ctx context.Context, tool string, input map[st
 	}
 	// READ_ONLY tools may preview via Execute semantics.
 	return e.call(tool, input)
+}
+
+// PreviewToolCall implements CallAwarePreviewer.
+func (e *JiraSimExecutor) PreviewToolCall(ctx context.Context, call ToolCall) (ToolResult, error) {
+	return e.Preview(ctx, call.Tool, call.Input)
 }
 
 func (e *JiraSimExecutor) call(tool string, input map[string]any) (ToolResult, error) {
