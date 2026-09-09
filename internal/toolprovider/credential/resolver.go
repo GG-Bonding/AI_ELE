@@ -8,39 +8,68 @@ import (
 	"sync"
 )
 
-// Principal identifies the actor requesting tool credentials / approvals (V3.3).
-type Principal struct {
-	ID          string
-	TenantID    string
-	Role        string
-	Permissions []string
+// ErrNoCredential means no principal/tenant credential was found.
+var ErrNoCredential = fmt.Errorf("credential: not found")
+
+// Options controls credential resolution policy (V3.4).
+type Options struct {
+	// AllowTenantFallback permits falling back to tenant-default when principal miss.
+	// Default false for side-effect / payment-class tools.
+	AllowTenantFallback bool
 }
 
-// MapResolver looks up credentials from an in-memory map keyed by tenant|tool or tenant|principal|tool.
+// MapResolver isolates principal vs tenant credentials (V3.4).
 type MapResolver struct {
-	mu   sync.RWMutex
-	data map[string]map[string]string
+	mu        sync.RWMutex
+	principal map[string]map[string]string // tenant|principal|tool
+	tenant    map[string]map[string]string // tenant|tool
+	Opts      Options
 }
 
-func NewMapResolver() *MapResolver {
-	return &MapResolver{data: map[string]map[string]string{}}
+func NewMapResolver(opts Options) *MapResolver {
+	return &MapResolver{
+		principal: map[string]map[string]string{},
+		tenant:    map[string]map[string]string{},
+		Opts:      opts,
+	}
 }
 
-func (r *MapResolver) Put(tenantID, principalID, toolName string, headers map[string]string) {
+// PutPrincipalCredential stores credentials for one actor (never writes tenant default).
+func (r *MapResolver) PutPrincipalCredential(tenantID, principalID, toolName string, headers map[string]string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.data[key(tenantID, principalID, toolName)] = clone(headers)
-	r.data[key(tenantID, "", toolName)] = clone(headers)
+	r.principal[pkey(tenantID, principalID, toolName)] = clone(headers)
+}
+
+// PutTenantCredential stores tenant-wide default credentials.
+func (r *MapResolver) PutTenantCredential(tenantID, toolName string, headers map[string]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tenant[tkey(tenantID, toolName)] = clone(headers)
+}
+
+// Put is deprecated alias for PutPrincipalCredential when principalID != ""; otherwise tenant.
+// Does NOT cross-write principal → tenant (V3.4 isolation).
+func (r *MapResolver) Put(tenantID, principalID, toolName string, headers map[string]string) {
+	if strings.TrimSpace(principalID) != "" {
+		r.PutPrincipalCredential(tenantID, principalID, toolName, headers)
+		return
+	}
+	r.PutTenantCredential(tenantID, toolName, headers)
 }
 
 func (r *MapResolver) Resolve(_ context.Context, tenantID, principalID, toolName string) (map[string]string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if h, ok := r.data[key(tenantID, principalID, toolName)]; ok {
-		return clone(h), nil
+	if strings.TrimSpace(principalID) != "" {
+		if h, ok := r.principal[pkey(tenantID, principalID, toolName)]; ok {
+			return clone(h), nil
+		}
 	}
-	if h, ok := r.data[key(tenantID, "", toolName)]; ok {
-		return clone(h), nil
+	if r.Opts.AllowTenantFallback || strings.TrimSpace(principalID) == "" {
+		if h, ok := r.tenant[tkey(tenantID, toolName)]; ok {
+			return clone(h), nil
+		}
 	}
 	return nil, nil
 }
@@ -96,8 +125,12 @@ func RequireApproverSeparation(requesterID, approverID string, enforce bool) err
 	return nil
 }
 
-func key(tenantID, principalID, toolName string) string {
+func pkey(tenantID, principalID, toolName string) string {
 	return tenantID + "|" + principalID + "|" + toolName
+}
+
+func tkey(tenantID, toolName string) string {
+	return tenantID + "|" + toolName
 }
 
 func clone(in map[string]string) map[string]string {

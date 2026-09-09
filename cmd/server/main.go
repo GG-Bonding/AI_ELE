@@ -271,8 +271,14 @@ func run() error {
 		default:
 			providers = append(providers, &simulator.JiraProvider{Sim: jirasim.New(), Registry: tools})
 		}
-		creds := credential.Chain{credential.EnvResolver{}}
+		creds := credential.Chain{
+			credential.NewMapResolver(credential.Options{
+				AllowTenantFallback: cfg.SkillRuntime.AllowTenantCredentialFallback,
+			}),
+			credential.EnvResolver{},
+		}
 		router := toolprovider.NewRouter(providers, tools, creds)
+		router.RejectDuplicateRoutes = true
 		if err := router.SyncRegistry(context.Background()); err != nil {
 			return fmt.Errorf("sync tool providers: %w", err)
 		}

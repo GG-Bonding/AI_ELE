@@ -90,6 +90,10 @@ type SkillRuntimeConfig struct {
 	RequireSeparateApprover bool          `yaml:"require_separate_approver"`
 	ExecutionLeaseTTL       time.Duration `yaml:"execution_lease_ttl"`
 	RecoveryInterval        time.Duration `yaml:"recovery_interval"`
+
+	// V3.4 Trustworthy execution
+	AllowTenantCredentialFallback bool `yaml:"allow_tenant_credential_fallback"`
+	RequireAuthPrincipal          bool `yaml:"require_auth_principal"`
 }
 
 // Load reads YAML from path and applies environment overrides.

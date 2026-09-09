@@ -61,6 +61,9 @@ func (m *MemoryExecutionStore) CreateExecution(ctx context.Context, ex skill.Exe
 	if ex.Status == "" {
 		ex.Status = skill.ExecPending
 	}
+	if ex.LeaseEpoch == 0 {
+		ex.LeaseEpoch = 1
+	}
 	if ex.IdempotencyKey != "" {
 		if existingID, ok := m.byIdem[m.key(ex.TenantID, ex.IdempotencyKey)]; ok {
 			if existing, ok := m.executions[m.key(ex.TenantID, existingID)]; ok {
@@ -125,9 +128,29 @@ func (m *MemoryExecutionStore) CreateStep(ctx context.Context, st skill.StepExec
 	if st.ID == "" {
 		st.ID = m.nextID("st")
 	}
+	if st.Attempt <= 0 {
+		st.Attempt = 1
+	}
 	k := m.key(st.TenantID, st.ExecutionID)
 	m.steps[k] = append(m.steps[k], st)
 	return st, nil
+}
+
+// UpdateStep implements skill.ExecutionStore (V3.4).
+func (m *MemoryExecutionStore) UpdateStep(ctx context.Context, st skill.StepExecution) (skill.StepExecution, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := m.key(st.TenantID, st.ExecutionID)
+	list := m.steps[k]
+	for i := range list {
+		if list[i].ID == st.ID {
+			list[i] = st
+			m.steps[k] = list
+			return st, nil
+		}
+	}
+	return skill.StepExecution{}, skill.ErrNotFound
 }
 
 // ListSteps implements skill.ExecutionStore.
@@ -334,8 +357,27 @@ func (m *MemoryExecutionStore) ClaimExecutionLease(ctx context.Context, tenantID
 	ex.LeaseOwner = owner
 	ex.LeaseUntil = &until
 	ex.HeartbeatAt = &now
+	ex.LeaseEpoch++
+	m.executions[k] = ex
+	return ex, true, nil
+}
+
+// UpdateExecutionFenced implements skill.DurableExecutionStore.
+func (m *MemoryExecutionStore) UpdateExecutionFenced(ctx context.Context, ex skill.Execution, expectedEpoch int64) (skill.Execution, bool, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := m.key(ex.TenantID, ex.ID)
+	cur, ok := m.executions[k]
+	if !ok {
+		return skill.Execution{}, false, skill.ErrNotFound
+	}
+	if cur.LeaseEpoch != expectedEpoch {
+		return cur, false, nil
+	}
 	m.executions[k] = ex
 	return ex, true, nil
 }
 
 var _ skill.DurableExecutionStore = (*MemoryExecutionStore)(nil)
+var _ skill.ExecutionStore = (*MemoryExecutionStore)(nil)

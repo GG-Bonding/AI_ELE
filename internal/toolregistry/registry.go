@@ -19,6 +19,24 @@ const (
 	RiskCritical Risk = "CRITICAL"
 )
 
+// IdempotencyCapability describes how UNKNOWN outcomes may be recovered (V3.4).
+type IdempotencyCapability string
+
+const (
+	IdempotencyNone            IdempotencyCapability = "NONE"
+	IdempotencyNative          IdempotencyCapability = "NATIVE"
+	IdempotencyQueryReconcile  IdempotencyCapability = "QUERY_RECONCILE"
+)
+
+// PreviewCapability describes shadow/dry-run support (V3.4).
+type PreviewCapability string
+
+const (
+	PreviewNone         PreviewCapability = "NONE"
+	PreviewLocalValidate PreviewCapability = "LOCAL_VALIDATE"
+	PreviewRemoteDryRun PreviewCapability = "REMOTE_DRY_RUN"
+)
+
 // Valid reports whether r is a known risk level.
 func (r Risk) Valid() bool {
 	switch r {
@@ -90,6 +108,10 @@ type Definition struct {
 
 	// AllowedTenants restricts usage; empty means all tenants.
 	AllowedTenants []string
+
+	// V3.4 execution capabilities.
+	IdempotencyCapability IdempotencyCapability
+	PreviewCapability     PreviewCapability
 }
 
 // Registry is a process-local tool capability catalog.
@@ -121,6 +143,20 @@ func (r *Registry) Register(def Definition) error {
 	}
 	if def.Timeout <= 0 {
 		def.Timeout = 15 * time.Second
+	}
+	if def.IdempotencyCapability == "" {
+		if def.Idempotent {
+			def.IdempotencyCapability = IdempotencyNative
+		} else {
+			def.IdempotencyCapability = IdempotencyNone
+		}
+	}
+	if def.PreviewCapability == "" {
+		if def.SideEffect {
+			def.PreviewCapability = PreviewLocalValidate
+		} else {
+			def.PreviewCapability = PreviewRemoteDryRun
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

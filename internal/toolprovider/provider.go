@@ -7,17 +7,17 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 )
 
-// Call is one tool invocation with durable-execution metadata (V3.3).
+// Call is one tool invocation with durable-execution metadata (V3.4).
 type Call struct {
 	Tool           string
 	Input          map[string]any
-	IdempotencyKey string
+	IdempotencyKey string // stable logical operation key (execution:step), NOT attempt
 	TenantID       string
 	PrincipalID    string
 	ExecutionID    string
 	StepID         string
-	Attempt        int
-	Headers        map[string]string // filled by credential resolver / router
+	Attempt        int // transport attempt for diagnostics only
+	Headers        map[string]string
 }
 
 // Result is a provider-neutral tool outcome.
@@ -25,6 +25,7 @@ type Result struct {
 	OK        bool
 	ErrorCode string
 	Output    map[string]any
+	Unknown   bool // true when transport timeout / ambiguous remote outcome
 }
 
 // Provider is a pluggable tool backend (simulator, MCP, HTTP, native).
@@ -38,10 +39,16 @@ type Provider interface {
 // ErrUnknownTool means no provider owns the tool name.
 var ErrUnknownTool = fmt.Errorf("toolprovider: unknown tool")
 
-// ToolIdempotencyKey builds a stable tool-level key from execution+step+attempt.
-func ToolIdempotencyKey(executionID, stepID string, attempt int) string {
-	if attempt <= 0 {
-		attempt = 1
-	}
-	return fmt.Sprintf("%s:%s:%d", executionID, stepID, attempt)
+// ErrDuplicateRoute means two providers claimed the same tool name.
+var ErrDuplicateRoute = fmt.Errorf("toolprovider: duplicate tool route")
+
+// OperationKey is the stable logical operation id (never includes attempt).
+func OperationKey(executionID, stepID string) string {
+	return fmt.Sprintf("%s:%s", executionID, stepID)
+}
+
+// ToolIdempotencyKey returns the stable Idempotency-Key for remote tools (V3.4).
+// Attempt is intentionally excluded so transport retries share one logical key.
+func ToolIdempotencyKey(executionID, stepID string, _ int) string {
+	return OperationKey(executionID, stepID)
 }

@@ -17,25 +17,27 @@ const (
 type ExecutionStatus string
 
 const (
-	ExecPending         ExecutionStatus = "PENDING"
-	ExecRunning         ExecutionStatus = "RUNNING"
-	ExecSucceeded       ExecutionStatus = "SUCCEEDED"
-	ExecFailed          ExecutionStatus = "FAILED"
-	ExecCancelled       ExecutionStatus = "CANCELLED"
-	ExecWaitingApproval ExecutionStatus = "WAITING_APPROVAL"
-	ExecDenied          ExecutionStatus = "DENIED"
+	ExecPending             ExecutionStatus = "PENDING"
+	ExecRunning             ExecutionStatus = "RUNNING"
+	ExecSucceeded           ExecutionStatus = "SUCCEEDED"
+	ExecFailed              ExecutionStatus = "FAILED"
+	ExecCancelled           ExecutionStatus = "CANCELLED"
+	ExecWaitingApproval     ExecutionStatus = "WAITING_APPROVAL"
+	ExecDenied              ExecutionStatus = "DENIED"
+	ExecNeedsReconciliation ExecutionStatus = "NEEDS_RECONCILIATION"
 )
 
 // StepStatus is one step outcome.
 type StepStatus string
 
 const (
-	StepPending   StepStatus = "PENDING"
-	StepRunning   StepStatus = "RUNNING"
-	StepSucceeded StepStatus = "SUCCEEDED"
-	StepFailed    StepStatus = "FAILED"
-	StepSkipped   StepStatus = "SKIPPED"
-	StepShadowed  StepStatus = "SHADOWED" // dry-run side-effect step
+	StepPending        StepStatus = "PENDING"
+	StepRunning        StepStatus = "RUNNING"
+	StepSucceeded      StepStatus = "SUCCEEDED"
+	StepFailed         StepStatus = "FAILED"
+	StepSkipped        StepStatus = "SKIPPED"
+	StepShadowed       StepStatus = "SHADOWED" // dry-run side-effect step
+	StepUnknownOutcome StepStatus = "UNKNOWN_OUTCOME"
 )
 
 // Execution is one Skill run (shadow or live).
@@ -55,28 +57,32 @@ type Execution struct {
 	StartedAt      time.Time       `json:"started_at"`
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 
-	// Durable execution checkpoint fields (V3.3).
-	StepCursor   int        `json:"step_cursor,omitempty"` // next Spec.Steps index to run
+	// Durable execution checkpoint fields (V3.3 / V3.4).
+	StepCursor   int        `json:"step_cursor,omitempty"`
 	LeaseOwner   string     `json:"lease_owner,omitempty"`
 	LeaseUntil   *time.Time `json:"lease_until,omitempty"`
 	HeartbeatAt  *time.Time `json:"heartbeat_at,omitempty"`
+	LeaseEpoch   int64      `json:"lease_epoch,omitempty"`
 	RequesterID  string     `json:"requester_id,omitempty"`
-	SpecSnapshot string     `json:"spec_snapshot,omitempty"` // YAML snapshot for recovery
+	SpecSnapshot string     `json:"spec_snapshot,omitempty"`
 }
 
 // StepExecution is one tool step within an Execution.
 type StepExecution struct {
-	ID          string         `json:"id"`
-	ExecutionID string         `json:"execution_id"`
-	TenantID    string         `json:"tenant_id"`
-	StepID      string         `json:"step_id"`
-	Tool        string         `json:"tool"`
-	Input       map[string]any `json:"input,omitempty"`
-	Output      map[string]any `json:"output,omitempty"`
-	Status      StepStatus     `json:"status"`
-	ErrorCode   string         `json:"error_code,omitempty"`
-	DurationMs  int64          `json:"duration_ms,omitempty"`
-	Sequence    int            `json:"sequence"`
+	ID           string         `json:"id"`
+	ExecutionID  string         `json:"execution_id"`
+	TenantID     string         `json:"tenant_id"`
+	StepID       string         `json:"step_id"`
+	Tool         string         `json:"tool"`
+	Input        map[string]any `json:"input,omitempty"`
+	Output       map[string]any `json:"output,omitempty"`
+	Status       StepStatus     `json:"status"`
+	ErrorCode    string         `json:"error_code,omitempty"`
+	DurationMs   int64          `json:"duration_ms,omitempty"`
+	Sequence     int            `json:"sequence"`
+	Attempt      int            `json:"attempt,omitempty"`
+	OperationKey string         `json:"operation_key,omitempty"`
+	LeaseEpoch   int64          `json:"lease_epoch,omitempty"`
 }
 
 // ApprovalStatus for high-risk live runs.
@@ -125,6 +131,7 @@ type ExecutionStore interface {
 	GetExecution(ctx context.Context, tenantID, id string) (Execution, error)
 	GetExecutionByIdempotency(ctx context.Context, tenantID, key string) (Execution, error)
 	CreateStep(ctx context.Context, st StepExecution) (StepExecution, error)
+	UpdateStep(ctx context.Context, st StepExecution) (StepExecution, error)
 	ListSteps(ctx context.Context, tenantID, executionID string) ([]StepExecution, error)
 	CreateApproval(ctx context.Context, req ApprovalRequest) (ApprovalRequest, error)
 	UpdateApproval(ctx context.Context, req ApprovalRequest) (ApprovalRequest, error)
@@ -132,11 +139,13 @@ type ExecutionStore interface {
 	GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (ApprovalRequest, error)
 }
 
-// DurableExecutionStore extends ExecutionStore with crash-recovery operations (V3.3).
+// DurableExecutionStore extends ExecutionStore with crash-recovery operations (V3.3/V3.4).
 type DurableExecutionStore interface {
 	ExecutionStore
 	ListStaleRunning(ctx context.Context, olderThan time.Time, limit int) ([]Execution, error)
 	ClaimExecutionLease(ctx context.Context, tenantID, executionID, owner string, until time.Time) (Execution, bool, error)
+	// UpdateExecutionFenced updates only when lease_epoch matches expectedEpoch (fencing).
+	UpdateExecutionFenced(ctx context.Context, ex Execution, expectedEpoch int64) (Execution, bool, error)
 }
 
 // LearningStore persists skill learning events.

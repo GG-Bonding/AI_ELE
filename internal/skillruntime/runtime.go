@@ -351,9 +351,11 @@ func (r *Runtime) runSteps(
 		resolved, resolveErr := ResolveArgs(st.Args, bindings)
 		seq++
 		stepStart := nowFn()
+		opKey := OperationKey(ex.ID, st.ID)
 		step := skill.StepExecution{
 			ID: ids(), ExecutionID: ex.ID, TenantID: ex.TenantID,
-			StepID: st.ID, Tool: st.Tool, Input: resolved, Status: skill.StepRunning, Sequence: seq,
+			StepID: st.ID, Tool: st.Tool, Input: resolved, Status: skill.StepPending, Sequence: seq,
+			Attempt: 1, OperationKey: opKey, LeaseEpoch: ex.LeaseEpoch,
 		}
 		if resolveErr != nil {
 			step.Status = skill.StepFailed
@@ -368,8 +370,9 @@ func (r *Runtime) runSteps(
 			}
 			if onError == "continue" {
 				ex.StepCursor = i + 1
-				ex = r.touchLease(ex, nowFn)
-				ex, _ = r.Store.UpdateExecution(runCtx, ex)
+				if !r.persistExecution(runCtx, &ex, nowFn) {
+					return ex, steps, ErrStaleLease
+				}
 				continue
 			}
 			return r.failExecution(runCtx, ex, steps, "TEMPLATE_ERROR", resolveErr.Error(), nowFn)
@@ -390,16 +393,69 @@ func (r *Runtime) runSteps(
 			onError = strings.ToLower(strings.TrimSpace(st.OnError.Action))
 		}
 
+		idemCap := toolregistry.IdempotencyNone
+		if def, ok := tools.Get(st.Tool); ok {
+			idemCap = def.IdempotencyCapability
+			if idemCap == "" && def.Idempotent {
+				idemCap = toolregistry.IdempotencyNative
+			}
+		}
+
 		var result ToolResult
 		var callErr error
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			result, callErr = r.invokeTool(runCtx, tools, ToolCall{
+			step.Attempt = attempt
+			step.Status = skill.StepPending
+			step.ErrorCode = ""
+			step.Output = nil
+			step.LeaseEpoch = ex.LeaseEpoch
+			var persistErr error
+			if attempt == 1 {
+				step, persistErr = r.Store.CreateStep(runCtx, step)
+			} else {
+				step.ID = ids()
+				step, persistErr = r.Store.CreateStep(runCtx, step)
+			}
+			if persistErr != nil {
+				return ex, steps, persistErr
+			}
+			step.Status = skill.StepRunning
+			if updater, ok := r.Store.(interface {
+				UpdateStep(context.Context, skill.StepExecution) (skill.StepExecution, error)
+			}); ok {
+				step, persistErr = updater.UpdateStep(runCtx, step)
+				if persistErr != nil {
+					return ex, steps, persistErr
+				}
+			}
+
+			result, callErr = r.invokeToolWithHeartbeat(runCtx, &ex, tools, ToolCall{
 				Tool: st.Tool, Input: resolved,
-				IdempotencyKey: toolIdemKey(ex.ID, st.ID, attempt),
-				TenantID:       ex.TenantID, ExecutionID: ex.ID, StepID: st.ID, Attempt: attempt,
-			}, shadow)
-			if callErr == nil && result.OK {
+				IdempotencyKey: opKey, // stable logical key — never includes attempt
+				TenantID:       ex.TenantID, PrincipalID: ex.RequesterID,
+				ExecutionID: ex.ID, StepID: st.ID, Attempt: attempt,
+			}, shadow, nowFn)
+			if callErr == nil && result.OK && !result.Unknown {
 				break
+			}
+			if result.Unknown || (callErr != nil && isAmbiguousTransport(callErr)) {
+				step.Status = skill.StepUnknownOutcome
+				step.ErrorCode = "UNKNOWN_OUTCOME"
+				step.DurationMs = nowFn().Sub(stepStart).Milliseconds()
+				step.Output = map[string]any{"error": "ambiguous remote outcome"}
+				if updater, ok := r.Store.(interface {
+					UpdateStep(context.Context, skill.StepExecution) (skill.StepExecution, error)
+				}); ok {
+					step, _ = updater.UpdateStep(runCtx, step)
+				}
+				steps = append(steps, step)
+				if idemCap == toolregistry.IdempotencyNative && attempt < maxAttempts {
+					if backoff > 0 {
+						_ = r.sleep(runCtx, backoff)
+					}
+					continue // safe retry with same operation key
+				}
+				return r.needsReconciliation(runCtx, ex, steps, "UNKNOWN_OUTCOME", "non-idempotent or exhausted retries", nowFn)
 			}
 			if attempt < maxAttempts && (onError == "retry" || st.Retry != nil) {
 				if backoff > 0 {
@@ -422,12 +478,17 @@ func (r *Runtime) runSteps(
 				step.ErrorCode = "SHADOW_UNSUPPORTED"
 			}
 			step.Output = map[string]any{"error": callErr.Error()}
-			step, _ = r.Store.CreateStep(runCtx, step)
+			if updater, ok := r.Store.(interface {
+				UpdateStep(context.Context, skill.StepExecution) (skill.StepExecution, error)
+			}); ok {
+				step, _ = updater.UpdateStep(runCtx, step)
+			}
 			steps = append(steps, step)
 			if onError == "continue" {
 				ex.StepCursor = i + 1
-				ex = r.touchLease(ex, nowFn)
-				ex, _ = r.Store.UpdateExecution(runCtx, ex)
+				if !r.persistExecution(runCtx, &ex, nowFn) {
+					return ex, steps, ErrStaleLease
+				}
 				continue
 			}
 			return r.failExecution(runCtx, ex, steps, step.ErrorCode, callErr.Error(), nowFn)
@@ -438,12 +499,17 @@ func (r *Runtime) runSteps(
 			if step.ErrorCode == "" {
 				step.ErrorCode = "TOOL_FAILED"
 			}
-			step, _ = r.Store.CreateStep(runCtx, step)
+			if updater, ok := r.Store.(interface {
+				UpdateStep(context.Context, skill.StepExecution) (skill.StepExecution, error)
+			}); ok {
+				step, _ = updater.UpdateStep(runCtx, step)
+			}
 			steps = append(steps, step)
 			if onError == "continue" {
 				ex.StepCursor = i + 1
-				ex = r.touchLease(ex, nowFn)
-				ex, _ = r.Store.UpdateExecution(runCtx, ex)
+				if !r.persistExecution(runCtx, &ex, nowFn) {
+					return ex, steps, ErrStaleLease
+				}
 				continue
 			}
 			return r.failExecution(runCtx, ex, steps, step.ErrorCode, "tool call failed", nowFn)
@@ -458,19 +524,21 @@ func (r *Runtime) runSteps(
 		} else {
 			step.Status = skill.StepSucceeded
 		}
-		step, err = r.Store.CreateStep(runCtx, step)
-		if err != nil {
-			return ex, steps, err
+		if updater, ok := r.Store.(interface {
+			UpdateStep(context.Context, skill.StepExecution) (skill.StepExecution, error)
+		}); ok {
+			step, err = updater.UpdateStep(runCtx, step)
+			if err != nil {
+				return ex, steps, err
+			}
 		}
 		steps = append(steps, step)
 		if st.SaveAs != "" {
 			bindings[st.SaveAs] = result.Output
 		}
 		ex.StepCursor = i + 1
-		ex = r.touchLease(ex, nowFn)
-		ex, err = r.Store.UpdateExecution(runCtx, ex)
-		if err != nil {
-			return ex, steps, err
+		if !r.persistExecution(runCtx, &ex, nowFn) {
+			return ex, steps, ErrStaleLease
 		}
 	}
 
@@ -482,8 +550,10 @@ func (r *Runtime) runSteps(
 	ex.LeaseOwner = ""
 	ex.LeaseUntil = nil
 	ex.Outputs = extractOutputs(spec, bindings)
-	ex, err = r.Store.UpdateExecution(runCtx, ex)
-	return ex, steps, err
+	if !r.persistExecution(runCtx, &ex, nowFn) {
+		return ex, steps, ErrStaleLease
+	}
+	return ex, steps, nil
 }
 
 func (r *Runtime) invokeTool(ctx context.Context, tools *toolregistry.Registry, call ToolCall, shadow bool) (ToolResult, error) {
@@ -506,6 +576,57 @@ func (r *Runtime) invokeTool(ctx context.Context, tools *toolregistry.Registry, 
 	return r.Exec.Execute(ctx, call.Tool, call.Input)
 }
 
+func (r *Runtime) invokeToolWithHeartbeat(
+	ctx context.Context,
+	ex *skill.Execution,
+	tools *toolregistry.Registry,
+	call ToolCall,
+	shadow bool,
+	nowFn func() time.Time,
+) (ToolResult, error) {
+	stop := make(chan struct{})
+	defer close(stop)
+	ttl := r.LeaseTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(ttl / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = r.persistExecution(ctx, ex, nowFn)
+			}
+		}
+	}()
+	return r.invokeTool(ctx, tools, call, shadow)
+}
+
+func (r *Runtime) persistExecution(ctx context.Context, ex *skill.Execution, nowFn func() time.Time) bool {
+	*ex = r.touchLease(*ex, nowFn)
+	if fenced, ok := r.Store.(interface {
+		UpdateExecutionFenced(context.Context, skill.Execution, int64) (skill.Execution, bool, error)
+	}); ok && ex.LeaseEpoch > 0 {
+		updated, ok, err := fenced.UpdateExecutionFenced(ctx, *ex, ex.LeaseEpoch)
+		if err != nil || !ok {
+			return false
+		}
+		*ex = updated
+		return true
+	}
+	updated, err := r.Store.UpdateExecution(ctx, *ex)
+	if err != nil {
+		return false
+	}
+	*ex = updated
+	return true
+}
+
 func (r *Runtime) touchLease(ex skill.Execution, nowFn func() time.Time) skill.Execution {
 	now := nowFn()
 	ttl := r.LeaseTTL
@@ -523,6 +644,43 @@ func (r *Runtime) touchLease(ex skill.Execution, nowFn func() time.Time) skill.E
 	return ex
 }
 
+func (r *Runtime) needsReconciliation(
+	ctx context.Context,
+	ex skill.Execution,
+	steps []skill.StepExecution,
+	code, msg string,
+	nowFn func() time.Time,
+) (skill.Execution, []skill.StepExecution, error) {
+	completed := nowFn()
+	ex.Status = skill.ExecNeedsReconciliation
+	ex.ErrorCode = code
+	ex.ErrorMessage = msg
+	ex.CompletedAt = &completed
+	if !r.persistExecution(ctx, &ex, nowFn) {
+		return ex, steps, ErrStaleLease
+	}
+	return ex, steps, nil
+}
+
+// ErrStaleLease means another worker claimed the execution (fencing).
+var ErrStaleLease = fmt.Errorf("skillruntime: stale lease epoch")
+
+// OperationKey is the stable logical operation id (execution:step).
+func OperationKey(executionID, stepID string) string {
+	return fmt.Sprintf("%s:%s", executionID, stepID)
+}
+
+func isAmbiguousTransport(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline")
+}
+
 // Recover continues a RUNNING execution from its step_cursor using SpecSnapshot or provided Spec.
 func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spec skill.Spec) (skill.Execution, []skill.StepExecution, error) {
 	if r == nil || r.Store == nil || r.Exec == nil {
@@ -532,9 +690,26 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 	if err != nil {
 		return skill.Execution{}, nil, err
 	}
+	if ex.Status == skill.ExecNeedsReconciliation {
+		steps, listErr := r.Store.ListSteps(ctx, tenantID, executionID)
+		return ex, steps, listErr
+	}
 	if ex.Status != skill.ExecRunning && ex.Status != skill.ExecPending {
 		steps, listErr := r.Store.ListSteps(ctx, tenantID, executionID)
 		return ex, steps, listErr
+	}
+	// Mark in-flight RUNNING steps without terminal result as UNKNOWN.
+	existing, _ := r.Store.ListSteps(ctx, tenantID, executionID)
+	for _, st := range existing {
+		if st.Status == skill.StepRunning || st.Status == skill.StepPending {
+			st.Status = skill.StepUnknownOutcome
+			st.ErrorCode = "UNKNOWN_OUTCOME"
+			if updater, ok := r.Store.(interface {
+				UpdateStep(context.Context, skill.StepExecution) (skill.StepExecution, error)
+			}); ok {
+				_, _ = updater.UpdateStep(ctx, st)
+			}
+		}
 	}
 	if len(spec.Steps) == 0 && ex.SpecSnapshot != "" {
 		parsed, parseErr := skill.ParseYAML(ex.SpecSnapshot)
@@ -555,13 +730,6 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 		return ex, nil, err
 	}
 	return r.runSteps(ctx, ex, spec, ex.Inputs, ex.Mode == skill.ModeShadow, nowFn, ids, tools)
-}
-
-func toolIdemKey(executionID, stepID string, attempt int) string {
-	if attempt <= 0 {
-		attempt = 1
-	}
-	return fmt.Sprintf("%s:%s:%d", executionID, stepID, attempt)
 }
 
 func snapshotSpec(spec skill.Spec) string {

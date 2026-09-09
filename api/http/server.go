@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/action"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/auth"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episodelearn"
@@ -231,7 +232,7 @@ func (s *Server) routes() {
 
 // Handler returns the root HTTP handler (middleware-ready).
 func (s *Server) Handler() http.Handler {
-	return s.requestIDMiddleware(s.mux)
+	return s.requestIDMiddleware(auth.HeaderMiddleware(s.mux))
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-experience-engine/agent-experience-engine/internal/auth"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 )
@@ -141,8 +142,16 @@ func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = skill.ModeShadow
 	}
+	requesterID := req.RequesterID
+	tenantID := req.TenantID
+	if p, ok := auth.FromContext(r.Context()); ok {
+		requesterID = p.ActorID
+		if p.TenantID != "" {
+			tenantID = p.TenantID
+		}
+	}
 	ex, steps, err := s.skillExec.Execute(r.Context(), skill.ExecuteInput{
-		TenantID:       req.TenantID,
+		TenantID:       tenantID,
 		EpisodeID:      req.EpisodeID,
 		SkillID:        req.SkillID,
 		VersionID:      req.VersionID,
@@ -150,7 +159,7 @@ func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
 		Inputs:         req.Inputs,
 		AvailableTools: req.AvailableTools,
 		IdempotencyKey: req.IdempotencyKey,
-		RequesterID:    req.RequesterID,
+		RequesterID:    requesterID,
 		RuntimeEnabled: true,
 	})
 	if err != nil {
@@ -188,8 +197,24 @@ func (s *Server) handleApproveSkillApproval(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	appr, err := s.skillExec.ApproveApproval(r.Context(), req.TenantID, r.PathValue("approval_id"),
-		firstNonEmpty(req.ApprovedBy, req.ActorID), s.requireSeparateApprover)
+	approvedBy := firstNonEmpty(req.ApprovedBy, req.ActorID)
+	tenantID := req.TenantID
+	if p, ok := auth.FromContext(r.Context()); ok {
+		// Trusted principal wins — body approved_by is ignored (anti-spoof).
+		approvedBy = p.ActorID
+		if p.TenantID != "" {
+			tenantID = p.TenantID
+		}
+		if s.requireSeparateApprover && !p.CanApprove() {
+			writeError(w, http.StatusForbidden, "principal lacks skill:approve permission")
+			return
+		}
+	} else if s.requireSeparateApprover && approvedBy == "" {
+		writeError(w, http.StatusUnauthorized, "authenticated principal required")
+		return
+	}
+	appr, err := s.skillExec.ApproveApproval(r.Context(), tenantID, r.PathValue("approval_id"),
+		approvedBy, s.requireSeparateApprover)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

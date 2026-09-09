@@ -60,20 +60,34 @@ func (p *Provider) ListTools(ctx context.Context) ([]toolregistry.Definition, er
 	out := make([]toolregistry.Definition, 0, len(resp.Tools))
 	for _, t := range resp.Tools {
 		def := toolregistry.Definition{
-			Name:       t.Name,
-			Risk:       p.cfg.DefaultRisk,
-			SideEffect: true,
-			Idempotent: false,
-			Timeout:    30 * time.Second,
+			Name:                  t.Name,
+			Risk:                  p.cfg.DefaultRisk,
+			SideEffect:            true,
+			Idempotent:            false,
+			Timeout:               30 * time.Second,
+			InputSchema:           jsonSchemaToParams(t.InputSchema),
+			OutputSchema:          jsonSchemaToParams(t.OutputSchema),
+			PreviewCapability:     toolregistry.PreviewLocalValidate,
+			IdempotencyCapability: toolregistry.IdempotencyNone,
 		}
 		if t.Annotations.ReadOnlyHint {
 			def.SideEffect = false
 			def.Risk = toolregistry.RiskLow
 			def.Idempotent = true
+			def.IdempotencyCapability = toolregistry.IdempotencyNative
+			def.PreviewCapability = toolregistry.PreviewRemoteDryRun
 		}
 		if t.Annotations.DestructiveHint {
 			def.Risk = toolregistry.RiskHigh
 			def.SideEffect = true
+			def.IdempotencyCapability = toolregistry.IdempotencyNone
+		}
+		if t.Annotations.IdempotentHint {
+			def.Idempotent = true
+			def.IdempotencyCapability = toolregistry.IdempotencyNative
+		}
+		if t.Annotations.OpenWorldHint {
+			def.PreviewCapability = toolregistry.PreviewNone
 		}
 		out = append(out, def)
 	}
@@ -154,12 +168,66 @@ type toolsListResult struct {
 }
 
 type mcpTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Annotations struct {
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	OutputSchema json.RawMessage `json:"outputSchema"`
+	Annotations  struct {
 		ReadOnlyHint    bool `json:"readOnlyHint"`
 		DestructiveHint bool `json:"destructiveHint"`
+		IdempotentHint  bool `json:"idempotentHint"`
+		OpenWorldHint   bool `json:"openWorldHint"`
 	} `json:"annotations"`
+}
+
+func jsonSchemaToParams(raw json.RawMessage) map[string]toolregistry.ParamSchema {
+	out := map[string]toolregistry.ParamSchema{}
+	if len(raw) == 0 {
+		return out
+	}
+	var schema struct {
+		Type       string `json:"type"`
+		Properties map[string]struct {
+			Type        string `json:"type"`
+			Description string `json:"description"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return out
+	}
+	req := map[string]struct{}{}
+	for _, r := range schema.Required {
+		req[r] = struct{}{}
+	}
+	for name, prop := range schema.Properties {
+		ps := toolregistry.ParamSchema{
+			Type:        mapJSONType(prop.Type),
+			Description: prop.Description,
+		}
+		if _, ok := req[name]; ok {
+			ps.Required = true
+		}
+		out[name] = ps
+	}
+	return out
+}
+
+func mapJSONType(t string) toolregistry.ParamType {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "string":
+		return toolregistry.ParamString
+	case "number", "integer":
+		return toolregistry.ParamNumber
+	case "boolean":
+		return toolregistry.ParamBoolean
+	case "object":
+		return toolregistry.ParamObject
+	case "array":
+		return toolregistry.ParamArray
+	default:
+		return toolregistry.ParamAny
+	}
 }
 
 type toolsCallResult struct {

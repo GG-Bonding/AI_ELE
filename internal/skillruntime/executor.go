@@ -13,14 +13,16 @@ type ToolResult struct {
 	OK        bool
 	ErrorCode string
 	Output    map[string]any
+	Unknown   bool // ambiguous remote outcome (timeout after send)
 }
 
-// ToolCall carries durable-execution / credential metadata for one tool invoke (V3.3).
+// ToolCall carries durable-execution / credential metadata for one tool invoke (V3.4).
 type ToolCall struct {
 	Tool           string
 	Input          map[string]any
-	IdempotencyKey string
+	IdempotencyKey string // stable operation key (execution:step)
 	TenantID       string
+	PrincipalID    string
 	ExecutionID    string
 	StepID         string
 	Attempt        int

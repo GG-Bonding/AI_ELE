@@ -136,3 +136,11 @@ Same ACE check but routed through `toolprovider.Router` + simulator provider:
 go test ./internal/replay/ -run TestJiraReplayEnvironmentPrefersSkill -v
 go test ./internal/skillexec/ -run TestRecoveryContinuesFromStepCursor -v
 ```
+
+## V3.4 Chaos / Trust Benchmarks
+
+```bash
+go test ./internal/skillruntime/chaos/ -v
+```
+
+Covers: stable operation key, credential isolation, lease fencing, step attempt ledger.

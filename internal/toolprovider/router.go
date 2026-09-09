@@ -24,11 +24,12 @@ func (NoopCredentials) Resolve(context.Context, string, string, string) (map[str
 
 // Router dispatches tool calls across Providers and adapts to skillruntime executors.
 type Router struct {
-	Providers   []Provider
-	Registry    *toolregistry.Registry
-	Credentials CredentialResolver
-	mu          sync.RWMutex
-	routes      map[string]Provider // tool name → provider
+	Providers             []Provider
+	Registry              *toolregistry.Registry
+	Credentials           CredentialResolver
+	RejectDuplicateRoutes bool // V3.4: fail SyncRegistry on name clash
+	mu                    sync.RWMutex
+	routes                map[string]Provider
 }
 
 // NewRouter builds a router. Call SyncRegistry to register tools into Registry.
@@ -47,7 +48,7 @@ func NewRouter(providers []Provider, registry *toolregistry.Registry, creds Cred
 	}
 }
 
-// SyncRegistry lists tools from all providers and registers them (last writer wins on name clash).
+// SyncRegistry lists tools from all providers and registers them.
 func (r *Router) SyncRegistry(ctx context.Context) error {
 	if r == nil {
 		return fmt.Errorf("toolprovider: nil router")
@@ -57,7 +58,7 @@ func (r *Router) SyncRegistry(ctx context.Context) error {
 	r.routes = map[string]Provider{}
 	for _, p := range r.Providers {
 		if p == nil {
-			continue
+			return fmt.Errorf("%w: nil provider", ErrUnknownTool)
 		}
 		defs, err := p.ListTools(ctx)
 		if err != nil {
@@ -68,9 +69,11 @@ func (r *Router) SyncRegistry(ctx context.Context) error {
 			if name == "" {
 				continue
 			}
+			if prev, ok := r.routes[name]; ok && r.RejectDuplicateRoutes {
+				return fmt.Errorf("%w: %s claimed by %s and %s", ErrDuplicateRoute, name, prev.Name(), p.Name())
+			}
 			if err := r.Registry.Register(def); err != nil {
-				// already registered — overwrite route only
-				_ = err
+				return err
 			}
 			r.routes[name] = p
 		}
@@ -139,7 +142,8 @@ func (r *Router) ExecuteCall(ctx context.Context, call Call) (skillruntime.ToolR
 func (r *Router) ExecuteToolCall(ctx context.Context, call skillruntime.ToolCall) (skillruntime.ToolResult, error) {
 	return r.ExecuteCall(ctx, Call{
 		Tool: call.Tool, Input: call.Input, IdempotencyKey: call.IdempotencyKey,
-		TenantID: call.TenantID, ExecutionID: call.ExecutionID, StepID: call.StepID, Attempt: call.Attempt,
+		TenantID: call.TenantID, PrincipalID: call.PrincipalID,
+		ExecutionID: call.ExecutionID, StepID: call.StepID, Attempt: call.Attempt,
 	})
 }
 
@@ -161,10 +165,11 @@ func (r *Router) PreviewCall(ctx context.Context, call Call) (skillruntime.ToolR
 func (r *Router) PreviewToolCall(ctx context.Context, call skillruntime.ToolCall) (skillruntime.ToolResult, error) {
 	return r.PreviewCall(ctx, Call{
 		Tool: call.Tool, Input: call.Input, IdempotencyKey: call.IdempotencyKey,
-		TenantID: call.TenantID, ExecutionID: call.ExecutionID, StepID: call.StepID, Attempt: call.Attempt,
+		TenantID: call.TenantID, PrincipalID: call.PrincipalID,
+		ExecutionID: call.ExecutionID, StepID: call.StepID, Attempt: call.Attempt,
 	})
 }
 
 func toRuntime(res Result) skillruntime.ToolResult {
-	return skillruntime.ToolResult{OK: res.OK, ErrorCode: res.ErrorCode, Output: res.Output}
+	return skillruntime.ToolResult{OK: res.OK, ErrorCode: res.ErrorCode, Output: res.Output, Unknown: res.Unknown}
 }
