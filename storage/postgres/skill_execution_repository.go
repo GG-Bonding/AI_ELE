@@ -91,7 +91,7 @@ func (r *SkillExecutionRepository) UpdateExecutionFenced(ctx context.Context, ex
 		SET status=$3, outputs=$4, error_code=$5, error_message=$6, completed_at=$7,
 		    step_cursor=$8, lease_owner=$9, lease_until=$10, heartbeat_at=$11,
 		    requester_id=$12, spec_snapshot=$13
-		WHERE tenant_id=$1 AND id=$2 AND lease_epoch=$14
+		WHERE tenant_id=$1 AND id=$2 AND lease_epoch=$14 AND status IN ('PENDING','RUNNING')
 	`, ex.TenantID, ex.ID, string(ex.Status), out, ex.ErrorCode, ex.ErrorMessage, ex.CompletedAt,
 		ex.StepCursor, ex.LeaseOwner, ex.LeaseUntil, ex.HeartbeatAt, ex.RequesterID, ex.SpecSnapshot, expectedEpoch)
 	if err != nil {
@@ -161,7 +161,7 @@ func (r *SkillExecutionRepository) CreateStepFenced(ctx context.Context, st skil
 		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
 		WHERE EXISTS (
 			SELECT 1 FROM skill_executions e
-			WHERE e.tenant_id=$3 AND e.id=$2 AND e.lease_epoch=$14
+			WHERE e.tenant_id=$3 AND e.id=$2 AND e.lease_epoch=$14 AND e.status='RUNNING'
 		)
 	`, st.ID, st.ExecutionID, st.TenantID, st.StepID, st.Tool, in, out, string(st.Status), st.ErrorCode, st.DurationMs, st.Sequence,
 		st.Attempt, st.OperationKey, expectedEpoch)
@@ -203,7 +203,7 @@ func (r *SkillExecutionRepository) UpdateStepFenced(ctx context.Context, st skil
 		FROM skill_executions e
 		WHERE s.tenant_id=$1 AND s.execution_id=$2 AND s.id=$3
 		  AND e.tenant_id=s.tenant_id AND e.id=s.execution_id
-		  AND e.lease_epoch=$11
+		  AND e.lease_epoch=$11 AND e.status='RUNNING'
 	`, st.TenantID, st.ExecutionID, st.ID, in, out, string(st.Status), st.ErrorCode, st.DurationMs, st.Attempt, st.OperationKey, expectedEpoch)
 	if err != nil {
 		return skill.StepExecution{}, false, err

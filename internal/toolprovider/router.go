@@ -182,10 +182,10 @@ func (r *Router) PreviewToolCall(ctx context.Context, call skillruntime.ToolCall
 }
 
 // Reconcile resolves UNKNOWN outcomes when a provider supports QUERY_RECONCILE.
-func (r *Router) Reconcile(ctx context.Context, call skillruntime.ToolCall) (skillruntime.ToolResult, error) {
+func (r *Router) Reconcile(ctx context.Context, call skillruntime.ToolCall) (skillruntime.ReconcileResult, error) {
 	p, err := r.providerFor(call.Tool)
 	if err != nil {
-		return skillruntime.ToolResult{}, err
+		return skillruntime.ReconcileResult{State: skillruntime.ReconcileUnknown, ErrorCode: "UNKNOWN_TOOL"}, err
 	}
 	tpCall := Call{
 		Tool: call.Tool, Input: call.Input, IdempotencyKey: call.IdempotencyKey,
@@ -194,15 +194,19 @@ func (r *Router) Reconcile(ctx context.Context, call skillruntime.ToolCall) (ski
 	}
 	tpCall, err = r.enrich(ctx, tpCall)
 	if err != nil {
-		return skillruntime.ToolResult{}, err
+		return skillruntime.ReconcileResult{State: skillruntime.ReconcileUnknown, ErrorCode: "CREDENTIAL_ERROR"}, err
 	}
 	if rec, ok := p.(interface {
-		Reconcile(context.Context, Call) (Result, error)
+		Reconcile(context.Context, Call) (ReconcileResult, error)
 	}); ok {
 		res, rerr := rec.Reconcile(ctx, tpCall)
-		return toRuntime(res), rerr
+		return skillruntime.ReconcileResult{
+			State:     skillruntime.ReconcileState(res.State),
+			Output:    res.Output,
+			ErrorCode: res.ErrorCode,
+		}, rerr
 	}
-	return skillruntime.ToolResult{OK: false, ErrorCode: "RECONCILE_UNSUPPORTED", Unknown: true}, nil
+	return skillruntime.ReconcileResult{State: skillruntime.ReconcileUnknown, ErrorCode: "RECONCILE_UNSUPPORTED"}, nil
 }
 
 func toRuntime(res Result) skillruntime.ToolResult {

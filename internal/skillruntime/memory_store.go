@@ -157,6 +157,9 @@ func (m *MemoryExecutionStore) CreateStepFenced(ctx context.Context, st skill.St
 	if ex.LeaseEpoch != expectedEpoch {
 		return st, false, nil
 	}
+	if ex.Status != skill.ExecRunning {
+		return st, false, nil
+	}
 	st.LeaseEpoch = expectedEpoch
 	created, err := m.createStepLocked(st)
 	if err != nil {
@@ -192,6 +195,9 @@ func (m *MemoryExecutionStore) UpdateStepFenced(ctx context.Context, st skill.St
 		return skill.StepExecution{}, false, skill.ErrNotFound
 	}
 	if ex.LeaseEpoch != expectedEpoch {
+		return st, false, nil
+	}
+	if ex.Status != skill.ExecRunning {
 		return st, false, nil
 	}
 	k := m.key(st.TenantID, st.ExecutionID)
@@ -485,6 +491,9 @@ func (m *MemoryExecutionStore) UpdateExecutionFenced(ctx context.Context, ex ski
 		return skill.Execution{}, false, skill.ErrNotFound
 	}
 	if cur.LeaseEpoch != expectedEpoch {
+		return cur, false, nil
+	}
+	if cur.Status != skill.ExecRunning && cur.Status != skill.ExecPending {
 		return cur, false, nil
 	}
 	ex.LeaseEpoch = expectedEpoch

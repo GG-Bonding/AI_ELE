@@ -16,6 +16,22 @@ type ToolResult struct {
 	Unknown   bool // ambiguous remote outcome (timeout after send)
 }
 
+// ReconcileState is the outcome of querying whether a prior side-effect applied (V3.4.1).
+type ReconcileState string
+
+const (
+	ReconcileApplied    ReconcileState = "APPLIED"
+	ReconcileNotApplied ReconcileState = "NOT_APPLIED"
+	ReconcileUnknown    ReconcileState = "UNKNOWN"
+)
+
+// ReconcileResult is distinct from ToolResult: query success ≠ original operation success.
+type ReconcileResult struct {
+	State     ReconcileState
+	Output    map[string]any
+	ErrorCode string
+}
+
 // ToolCall carries durable-execution / credential metadata for one tool invoke (V3.4).
 type ToolCall struct {
 	Tool           string
@@ -36,6 +52,11 @@ type ToolExecutor interface {
 // CallAwareExecutor optionally receives idempotency / execution context (V3.3).
 type CallAwareExecutor interface {
 	ExecuteToolCall(ctx context.Context, call ToolCall) (ToolResult, error)
+}
+
+// ReconcileAwareExecutor resolves UNKNOWN outcomes via provider query (V3.4.1).
+type ReconcileAwareExecutor interface {
+	Reconcile(ctx context.Context, call ToolCall) (ReconcileResult, error)
 }
 
 // PreviewExecutor dry-runs side-effect tools for SHADOW mode.

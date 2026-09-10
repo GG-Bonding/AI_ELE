@@ -791,10 +791,10 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 	}
 
 	existing, _ := r.Store.ListSteps(ctx, tenantID, executionID)
-	// Mark in-flight attempts UNKNOWN (fenced).
+	// Only RUNNING attempts are ambiguous (remote may have started). PENDING never left the ledger.
 	for i := range existing {
 		st := existing[i]
-		if st.Status == skill.StepRunning || st.Status == skill.StepPending {
+		if st.Status == skill.StepRunning {
 			st.Status = skill.StepUnknownOutcome
 			st.ErrorCode = "UNKNOWN_OUTCOME"
 			ok, uerr := r.updateStepFenced(ctx, &st, ex.LeaseEpoch)
@@ -814,35 +814,48 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 	tools := r.tools()
 
 	switch plan.Decision {
-	case RecoveryAbort:
+	case RecoveryFail:
+		return r.failExecution(ctx, ex, existing, "STEP_FAILED", plan.Reason, nowFn)
+	case RecoveryManual:
 		return r.needsReconciliation(ctx, ex, existing, "NEEDS_RECONCILIATION", plan.Reason, nowFn)
 	case RecoveryReconcile:
 		opKey := plan.LastStep.OperationKey
 		if opKey == "" {
 			opKey = OperationKey(ex.ID, plan.LastStep.StepID)
 		}
-		if rec, ok := r.Exec.(interface {
-			Reconcile(context.Context, ToolCall) (ToolResult, error)
-		}); ok && plan.LastStep.ID != "" {
+		if rec, ok := r.Exec.(ReconcileAwareExecutor); ok && plan.LastStep.ID != "" {
 			res, rerr := rec.Reconcile(ctx, ToolCall{
 				Tool: plan.Tool, Input: plan.LastStep.Input,
 				IdempotencyKey: opKey,
 				TenantID:       ex.TenantID, PrincipalID: ex.RequesterID,
 				ExecutionID: ex.ID, StepID: plan.LastStep.StepID, Attempt: plan.LastStep.Attempt,
 			})
-			if rerr == nil && res.OK && !res.Unknown {
-				plan.LastStep.Status = skill.StepSucceeded
-				plan.LastStep.Output = res.Output
-				plan.LastStep.ErrorCode = ""
-				okFence, _ := r.updateStepFenced(ctx, &plan.LastStep, ex.LeaseEpoch)
-				if !okFence {
-					return ex, existing, ErrStaleLease
+			if rerr == nil {
+				switch res.State {
+				case ReconcileApplied:
+					plan.LastStep.Status = skill.StepSucceeded
+					plan.LastStep.Output = res.Output
+					plan.LastStep.ErrorCode = ""
+					okFence, _ := r.updateStepFenced(ctx, &plan.LastStep, ex.LeaseEpoch)
+					if !okFence {
+						return ex, existing, ErrStaleLease
+					}
+					ex.StepCursor++
+					if !r.persistExecutionFenced(ctx, &ex) {
+						return ex, existing, ErrStaleLease
+					}
+					return r.runSteps(ctx, ex, spec, ex.Inputs, ex.Mode == skill.ModeShadow, nowFn, ids, tools, 0)
+				case ReconcileNotApplied:
+					// Confirmed never applied — safe to execute next attempt with same operation_key.
+					if !r.persistExecutionFenced(ctx, &ex) {
+						return ex, existing, ErrStaleLease
+					}
+					next := plan.LastStep.Attempt + 1
+					if next < 2 {
+						next = 2
+					}
+					return r.runSteps(ctx, ex, spec, ex.Inputs, ex.Mode == skill.ModeShadow, nowFn, ids, tools, next)
 				}
-				ex.StepCursor++
-				if !r.persistExecutionFenced(ctx, &ex) {
-					return ex, existing, ErrStaleLease
-				}
-				return r.runSteps(ctx, ex, spec, ex.Inputs, ex.Mode == skill.ModeShadow, nowFn, ids, tools, 0)
 			}
 		}
 		return r.needsReconciliation(ctx, ex, existing, "NEEDS_RECONCILIATION", plan.Reason, nowFn)
@@ -853,6 +866,9 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 		}
 		return r.runSteps(ctx, ex, spec, ex.Inputs, ex.Mode == skill.ModeShadow, nowFn, ids, tools, 0)
 	case RecoveryRetry:
+		if plan.LastStep.Status == skill.StepPending && plan.LastStep.ID != "" {
+			return r.resumePendingStep(ctx, ex, spec, existing, plan, nowFn, ids, tools)
+		}
 		if !r.persistExecutionFenced(ctx, &ex) {
 			return ex, existing, ErrStaleLease
 		}
@@ -864,6 +880,110 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 	default:
 		return r.needsReconciliation(ctx, ex, existing, "NEEDS_RECONCILIATION", "unknown recovery decision", nowFn)
 	}
+}
+
+// resumePendingStep continues a PENDING attempt that never reached the remote tool.
+func (r *Runtime) resumePendingStep(
+	ctx context.Context,
+	ex skill.Execution,
+	spec skill.Spec,
+	steps []skill.StepExecution,
+	plan RecoveryPlan,
+	nowFn func() time.Time,
+	ids func() string,
+	tools *toolregistry.Registry,
+) (skill.Execution, []skill.StepExecution, error) {
+	_ = ids
+	if !r.persistExecutionFenced(ctx, &ex) {
+		return ex, steps, ErrStaleLease
+	}
+	step := plan.LastStep
+	step.Status = skill.StepRunning
+	step.ErrorCode = ""
+	okFence, err := r.updateStepFenced(ctx, &step, ex.LeaseEpoch)
+	if err != nil {
+		return ex, steps, err
+	}
+	if !okFence {
+		return ex, steps, ErrStaleLease
+	}
+	shadow := ex.Mode == skill.ModeShadow
+	opKey := step.OperationKey
+	if opKey == "" {
+		opKey = OperationKey(ex.ID, step.StepID)
+	}
+	start := nowFn()
+	result, callErr := r.invokeToolWithHeartbeat(ctx, ex, tools, ToolCall{
+		Tool: step.Tool, Input: step.Input, IdempotencyKey: opKey,
+		TenantID: ex.TenantID, PrincipalID: ex.RequesterID,
+		ExecutionID: ex.ID, StepID: step.StepID, Attempt: step.Attempt,
+	}, shadow)
+	step.DurationMs = nowFn().Sub(start).Milliseconds()
+	step.Output = result.Output
+
+	replaceStep := func(st skill.StepExecution) {
+		for i := range steps {
+			if steps[i].ID == st.ID {
+				steps[i] = st
+				return
+			}
+		}
+		steps = append(steps, st)
+	}
+
+	if result.Unknown || (callErr != nil && isAmbiguousTransport(callErr)) {
+		step.Status = skill.StepUnknownOutcome
+		step.ErrorCode = "UNKNOWN_OUTCOME"
+		okFence, _ = r.updateStepFenced(ctx, &step, ex.LeaseEpoch)
+		if !okFence {
+			return ex, steps, ErrStaleLease
+		}
+		replaceStep(step)
+		idemCap := plan.Capability
+		if idemCap == toolregistry.IdempotencyNative {
+			return r.runSteps(ctx, ex, spec, ex.Inputs, shadow, nowFn, ids, tools, step.Attempt+1)
+		}
+		return r.needsReconciliation(ctx, ex, steps, "UNKNOWN_OUTCOME", "ambiguous after pending resume", nowFn)
+	}
+	if callErr != nil || !result.OK {
+		step.Status = skill.StepFailed
+		step.ErrorCode = result.ErrorCode
+		if step.ErrorCode == "" && callErr != nil {
+			step.ErrorCode = "EXECUTOR_ERROR"
+			step.Output = map[string]any{"error": callErr.Error()}
+		}
+		if step.ErrorCode == "" {
+			step.ErrorCode = "TOOL_FAILED"
+		}
+		okFence, _ = r.updateStepFenced(ctx, &step, ex.LeaseEpoch)
+		if !okFence {
+			return ex, steps, ErrStaleLease
+		}
+		replaceStep(step)
+		return r.failExecution(ctx, ex, steps, step.ErrorCode, "pending resume tool failed", nowFn)
+	}
+	sideEffect := false
+	if def, ok := tools.Get(step.Tool); ok {
+		sideEffect = def.SideEffect
+	}
+	if shadow && sideEffect {
+		step.Status = skill.StepShadowed
+	} else {
+		step.Status = skill.StepSucceeded
+	}
+	okFence, err = r.updateStepFenced(ctx, &step, ex.LeaseEpoch)
+	if err != nil {
+		return ex, steps, err
+	}
+	if !okFence {
+		return ex, steps, ErrStaleLease
+	}
+	replaceStep(step)
+	ex.StepCursor++
+	if !r.persistExecutionFenced(ctx, &ex) {
+		return ex, steps, ErrStaleLease
+	}
+	return r.runSteps(ctx, ex, spec, ex.Inputs, shadow, nowFn, ids, tools, 0)
 }
 
 func snapshotSpec(spec skill.Spec) string {

@@ -15,6 +15,7 @@ import (
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/action"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/attribution"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/auth"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/config"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/contextx"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/episode"
@@ -347,6 +348,16 @@ func run() error {
 	} else {
 		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")
 	}
+
+	principalProvider, err := auth.NewProvider(auth.Config{
+		Mode:          auth.Mode(cfg.Auth.Mode),
+		JWTHMACSecret: cfg.Auth.JWTHMACSecret,
+	})
+	if err != nil {
+		return fmt.Errorf("init auth provider: %w", err)
+	}
+	opts.PrincipalProvider = principalProvider
+	logger.Info("auth principal provider configured", "mode", cfg.Auth.Mode)
 
 	srv := httpserver.New(logger, httpserver.DBReady{DB: db}, opts)
 	httpServer := &http.Server{

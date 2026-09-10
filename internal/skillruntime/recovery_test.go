@@ -26,7 +26,7 @@ func TestRecoveryPlannerNativeUnknownRetriesNextAttempt(t *testing.T) {
 	}
 }
 
-func TestRecoveryPlannerNoneUnknownAborts(t *testing.T) {
+func TestRecoveryPlannerNoneUnknownManual(t *testing.T) {
 	t.Parallel()
 	tools := toolregistry.Default()
 	spec := skill.Spec{Steps: []skill.SkillStep{{ID: "refund", Tool: "jira.create_issue"}}}
@@ -36,8 +36,22 @@ func TestRecoveryPlannerNoneUnknownAborts(t *testing.T) {
 		Status: skill.StepUnknownOutcome, Attempt: 1, OperationKey: "ex:refund",
 	}}
 	plan := RecoveryPlanner{Tools: tools}.Plan(ex, spec, steps)
-	if plan.Decision != RecoveryAbort {
-		t.Fatalf("want ABORT got %+v", plan)
+	if plan.Decision != RecoveryManual {
+		t.Fatalf("want MANUAL got %+v", plan)
+	}
+}
+
+func TestRecoveryPlannerPendingAlwaysRetries(t *testing.T) {
+	t.Parallel()
+	spec := skill.Spec{Steps: []skill.SkillStep{{ID: "refund", Tool: "jira.create_issue"}}}
+	ex := skill.Execution{StepCursor: 0}
+	steps := []skill.StepExecution{{
+		ID: "a1", StepID: "refund", Tool: "jira.create_issue",
+		Status: skill.StepPending, Attempt: 1, OperationKey: "ex:refund",
+	}}
+	plan := RecoveryPlanner{Tools: toolregistry.Default()}.Plan(ex, spec, steps)
+	if plan.Decision != RecoveryRetry || plan.NextAttempt != 1 {
+		t.Fatalf("want RETRY same attempt, got %+v", plan)
 	}
 }
 
@@ -54,7 +68,7 @@ func TestRecoveryPlannerSucceededContinues(t *testing.T) {
 	}
 }
 
-func TestRecoveryPlannerFailedWithoutRetryAborts(t *testing.T) {
+func TestRecoveryPlannerFailedWithoutRetryFails(t *testing.T) {
 	t.Parallel()
 	spec := skill.Spec{Steps: []skill.SkillStep{{ID: "s1", Tool: "jira.search_projects"}}}
 	ex := skill.Execution{StepCursor: 0}
@@ -62,8 +76,8 @@ func TestRecoveryPlannerFailedWithoutRetryAborts(t *testing.T) {
 		ID: "a1", StepID: "s1", Status: skill.StepFailed, Attempt: 1,
 	}}
 	plan := RecoveryPlanner{Tools: toolregistry.Default()}.Plan(ex, spec, steps)
-	if plan.Decision != RecoveryAbort {
-		t.Fatalf("want ABORT without retry policy, got %+v", plan)
+	if plan.Decision != RecoveryFail {
+		t.Fatalf("want FAIL without retry policy, got %+v", plan)
 	}
 }
 

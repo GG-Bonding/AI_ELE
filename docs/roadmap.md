@@ -140,6 +140,7 @@ Full DoD and architecture: [docs/v2.md](v2.md).
 | **V3.1 Production hardening** | ✅ lifecycle gate, approval resume, atomic learning, PreviewExecutor, transactional lifecycle, learning-chain bench |
 | **V3.2 Smart skill layer** | ✅ semantic retrieve, AutoRevise, shadow A/B, offline ACE replay, Thompson select |
 | **V3.3 Real-world runtime** | ✅ tool providers (MCP/HTTP/sim), durable exec + recovery, LLM revise, selection policy, replay env |
-| **V3.4 Trustworthy execution** | ✅ RecoveryPlanner + fenced step/exec + RenewLease + RequireAuthPrincipal; crash acceptance closed |
+| **V3.4 Trustworthy execution** | ✅ RecoveryPlanner + fencing + RenewLease + RequireAuthPrincipal |
+| **V3.4.1 Reliability/security patch** | ✅ PENDING≠UNKNOWN, Fail vs Manual, ReconcileResult, terminal fencing, JWT/dev_headers auth |
 
 Full architecture and non-goals: [docs/v3.md](v3.md).

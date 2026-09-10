@@ -19,6 +19,13 @@ type Config struct {
 	Evaluator    EvaluatorConfig    `yaml:"evaluator"`
 	Retrieval    RetrievalConfig    `yaml:"retrieval"`
 	SkillRuntime SkillRuntimeConfig `yaml:"skill_runtime"`
+	Auth         AuthConfig         `yaml:"auth"`
+}
+
+// AuthConfig selects PrincipalProvider mode (V3.4.1).
+type AuthConfig struct {
+	Mode          string `yaml:"mode"` // none | dev_headers | jwt
+	JWTHMACSecret string `yaml:"jwt_hmac_secret"`
 }
 
 type ServerConfig struct {
@@ -196,6 +203,9 @@ func (c *Config) applyDefaults() {
 	if c.SkillRuntime.RecoveryInterval == 0 {
 		c.SkillRuntime.RecoveryInterval = 15 * time.Second
 	}
+	if c.Auth.Mode == "" {
+		c.Auth.Mode = "none"
+	}
 }
 
 func (c *Config) applyEnvOverrides() {
@@ -235,6 +245,12 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("AEE_SKILL_RUNTIME_ENABLED"); v != "" {
 		c.SkillRuntime.Enabled = v == "1" || strings.EqualFold(v, "true")
 	}
+	if v := os.Getenv("AEE_AUTH_MODE"); v != "" {
+		c.Auth.Mode = v
+	}
+	if v := os.Getenv("AEE_AUTH_JWT_HMAC_SECRET"); v != "" {
+		c.Auth.JWTHMACSecret = v
+	}
 }
 
 // Validate fails fast on missing required fields.
@@ -273,6 +289,18 @@ func (c Config) Validate() error {
 	}
 	if c.Evaluator.ActiveMin < c.Evaluator.CandidateMin {
 		return fmt.Errorf("evaluator.active_min must be >= evaluator.candidate_min")
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.Auth.Mode))
+	switch mode {
+	case "none", "dev_headers", "jwt":
+	default:
+		return fmt.Errorf("auth.mode must be one of none|dev_headers|jwt, got %q", c.Auth.Mode)
+	}
+	if mode == "jwt" && strings.TrimSpace(c.Auth.JWTHMACSecret) == "" {
+		return fmt.Errorf("auth.jwt_hmac_secret is required when auth.mode=jwt")
+	}
+	if c.SkillRuntime.RequireAuthPrincipal && mode == "none" {
+		return fmt.Errorf("skill_runtime.require_auth_principal requires auth.mode=dev_headers|jwt")
 	}
 	return nil
 }

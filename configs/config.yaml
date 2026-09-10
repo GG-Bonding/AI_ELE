@@ -59,3 +59,7 @@ skill_runtime:
   recovery_interval: 15s
   allow_tenant_credential_fallback: false
   require_auth_principal: false
+
+auth:
+  mode: none
+  jwt_hmac_secret: ""

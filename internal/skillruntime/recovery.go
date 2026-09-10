@@ -8,20 +8,24 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 )
 
-// RecoveryDecision is how crash recovery should treat the current step (V3.4 closeout).
+// RecoveryDecision is how crash recovery should treat the current step (V3.4.1).
 type RecoveryDecision string
 
 const (
 	RecoveryRetry     RecoveryDecision = "RETRY"
 	RecoveryReconcile RecoveryDecision = "RECONCILE"
 	RecoveryContinue  RecoveryDecision = "CONTINUE"
-	RecoveryAbort     RecoveryDecision = "ABORT"
+	RecoveryFail      RecoveryDecision = "FAIL"   // known terminal failure → ExecFailed
+	RecoveryManual    RecoveryDecision = "MANUAL" // ambiguous remote outcome → NEEDS_RECONCILIATION
+
+	// RecoveryAbort is deprecated alias of RecoveryManual (kept for older call sites/tests).
+	RecoveryAbort = RecoveryManual
 )
 
 // RecoveryPlan is the outcome of RecoveryPlanner.Plan.
 type RecoveryPlan struct {
 	Decision    RecoveryDecision
-	NextAttempt int    // for RETRY
+	NextAttempt int // for RETRY
 	Reason      string
 	LastStep    skill.StepExecution
 	Tool        string
@@ -49,7 +53,6 @@ func (p RecoveryPlanner) Plan(ex skill.Execution, spec skill.Spec, steps []skill
 	st := spec.Steps[cursor]
 	last := latestAttemptForStep(steps, st.ID)
 	if last.ID == "" {
-		// No attempt yet for this cursor — safe to start attempt 1.
 		return RecoveryPlan{Decision: RecoveryRetry, NextAttempt: 1, Reason: "no prior attempt", Tool: st.Tool}
 	}
 
@@ -71,6 +74,17 @@ func (p RecoveryPlanner) Plan(ex skill.Execution, spec skill.Spec, steps []skill
 		plan.Decision = RecoveryContinue
 		plan.Reason = fmt.Sprintf("last attempt %d already %s", last.Attempt, last.Status)
 		return plan
+
+	case skill.StepPending:
+		// Ledger written but remote call never started — always safe to resume same attempt.
+		plan.Decision = RecoveryRetry
+		plan.NextAttempt = last.Attempt
+		if plan.NextAttempt < 1 {
+			plan.NextAttempt = 1
+		}
+		plan.Reason = fmt.Sprintf("PENDING attempt %d: remote never started; resume same attempt", plan.NextAttempt)
+		return plan
+
 	case skill.StepFailed:
 		maxAttempts := 1
 		if st.Retry != nil && st.Retry.MaxAttempts > 1 {
@@ -92,10 +106,11 @@ func (p RecoveryPlanner) Plan(ex skill.Execution, spec skill.Spec, steps []skill
 			plan.Reason = "last attempt failed with on_error=continue"
 			return plan
 		}
-		plan.Decision = RecoveryAbort
+		plan.Decision = RecoveryFail
 		plan.Reason = fmt.Sprintf("step failed permanently after attempt %d", last.Attempt)
 		return plan
-	case skill.StepUnknownOutcome, skill.StepRunning, skill.StepPending:
+
+	case skill.StepUnknownOutcome, skill.StepRunning:
 		opKey := last.OperationKey
 		if opKey == "" {
 			opKey = OperationKey(ex.ID, st.ID)
@@ -114,12 +129,13 @@ func (p RecoveryPlanner) Plan(ex skill.Execution, spec skill.Spec, steps []skill
 			plan.Reason = fmt.Sprintf("UNKNOWN requires provider reconcile op=%s", opKey)
 			return plan
 		default:
-			plan.Decision = RecoveryAbort
+			plan.Decision = RecoveryManual
 			plan.Reason = fmt.Sprintf("UNKNOWN on non-idempotent tool op=%s; needs human/provider reconciliation", opKey)
 			return plan
 		}
+
 	default:
-		plan.Decision = RecoveryAbort
+		plan.Decision = RecoveryManual
 		plan.Reason = "unrecognized last status: " + string(last.Status)
 		return plan
 	}

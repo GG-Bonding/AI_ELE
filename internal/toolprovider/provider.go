@@ -20,6 +20,22 @@ type Call struct {
 	Headers        map[string]string
 }
 
+// ReconcileState is whether a prior side-effect applied (V3.4.1).
+type ReconcileState string
+
+const (
+	ReconcileApplied    ReconcileState = "APPLIED"
+	ReconcileNotApplied ReconcileState = "NOT_APPLIED"
+	ReconcileUnknown    ReconcileState = "UNKNOWN"
+)
+
+// ReconcileResult is distinct from Result: query OK ≠ original operation applied.
+type ReconcileResult struct {
+	State     ReconcileState
+	Output    map[string]any
+	ErrorCode string
+}
+
 // Result is a provider-neutral tool outcome.
 type Result struct {
 	OK        bool

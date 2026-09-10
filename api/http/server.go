@@ -133,6 +133,7 @@ type Server struct {
 	requireSeparateApprover bool
 	requireAuthPrincipal    bool
 	skillRevise             *skillrevise.Service
+	principalProvider       auth.PrincipalProvider
 	mux                     *http.ServeMux
 }
 
@@ -160,6 +161,7 @@ type Options struct {
 	RequireSeparateApprover bool
 	RequireAuthPrincipal    bool
 	SkillRevise             *skillrevise.Service
+	PrincipalProvider       auth.PrincipalProvider
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -187,6 +189,7 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		requireSeparateApprover: opts.RequireSeparateApprover,
 		requireAuthPrincipal:    opts.RequireAuthPrincipal,
 		skillRevise:             opts.SkillRevise,
+		principalProvider:       opts.PrincipalProvider,
 		mux:                     http.NewServeMux(),
 	}
 	s.routes()
@@ -239,7 +242,12 @@ func (s *Server) routes() {
 
 // Handler returns the root HTTP handler (middleware-ready).
 func (s *Server) Handler() http.Handler {
-	return s.requestIDMiddleware(auth.HeaderMiddleware(s.mux))
+	provider := s.principalProvider
+	if provider == nil {
+		// Legacy default for unit tests that omit Auth wiring.
+		provider = auth.DevHeaderProvider{}
+	}
+	return s.requestIDMiddleware(auth.Middleware(provider)(s.mux))
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
