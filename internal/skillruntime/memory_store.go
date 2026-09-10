@@ -311,6 +311,38 @@ func (m *MemoryExecutionStore) GetApprovalByExecution(ctx context.Context, tenan
 	return latest, nil
 }
 
+// ListFailedByVersion implements skill.ExecutionStore.
+func (m *MemoryExecutionStore) ListFailedByVersion(ctx context.Context, tenantID, skillVersionID string, limit int) ([]skill.Execution, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 10
+	}
+	out := make([]skill.Execution, 0, limit)
+	for _, ex := range m.executions {
+		if ex.TenantID != tenantID || ex.SkillVersionID != skillVersionID {
+			continue
+		}
+		if ex.Status != skill.ExecFailed && ex.Status != skill.ExecNeedsReconciliation {
+			continue
+		}
+		out = append(out, ex)
+	}
+	// Newest first by StartedAt.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].StartedAt.After(out[i].StartedAt) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // CreateLearningEvent implements skill.LearningStore.
 func (m *MemoryExecutionStore) CreateLearningEvent(ctx context.Context, ev skill.LearningEvent) (skill.LearningEvent, error) {
 	_ = ctx

@@ -297,6 +297,35 @@ func (r *SkillExecutionRepository) GetApprovalByExecution(ctx context.Context, t
 	return scanApproval(row)
 }
 
+func (r *SkillExecutionRepository) ListFailedByVersion(ctx context.Context, tenantID, skillVersionID string, limit int) ([]skill.Execution, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, tenant_id, COALESCE(episode_id,''), skill_id, skill_version_id, mode, status,
+		       COALESCE(idempotency_key,''), inputs, outputs, error_code, error_message, started_at, completed_at,
+		       step_cursor, COALESCE(lease_owner,''), lease_until, heartbeat_at, COALESCE(requester_id,''), COALESCE(spec_snapshot,''),
+		       COALESCE(lease_epoch,0)
+		FROM skill_executions
+		WHERE tenant_id=$1 AND skill_version_id=$2 AND status IN ('FAILED','NEEDS_RECONCILIATION')
+		ORDER BY started_at DESC
+		LIMIT $3
+	`, tenantID, skillVersionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []skill.Execution
+	for rows.Next() {
+		ex, err := scanExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
+}
+
 func scanApproval(row execScanner) (skill.ApprovalRequest, error) {
 	var req skill.ApprovalRequest
 	var status string

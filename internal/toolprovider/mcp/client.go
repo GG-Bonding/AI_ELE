@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolprovider"
@@ -27,7 +28,9 @@ type Config struct {
 
 // Provider talks to an MCP server over HTTP JSON-RPC (tools/list, tools/call).
 type Provider struct {
-	cfg Config
+	cfg     Config
+	mu      sync.RWMutex
+	schemas map[string]map[string]toolregistry.ParamSchema
 }
 
 // New constructs an MCP provider. BaseURL is required.
@@ -44,7 +47,7 @@ func New(cfg Config) (*Provider, error) {
 	if cfg.DefaultRisk == "" {
 		cfg.DefaultRisk = toolregistry.RiskMedium
 	}
-	return &Provider{cfg: cfg}, nil
+	return &Provider{cfg: cfg, schemas: map[string]map[string]toolregistry.ParamSchema{}}, nil
 }
 
 func (p *Provider) Name() string { return p.cfg.Name }
@@ -58,6 +61,7 @@ func (p *Provider) ListTools(ctx context.Context) ([]toolregistry.Definition, er
 		return nil, err
 	}
 	out := make([]toolregistry.Definition, 0, len(resp.Tools))
+	schemas := map[string]map[string]toolregistry.ParamSchema{}
 	for _, t := range resp.Tools {
 		def := toolregistry.Definition{
 			Name:                  t.Name,
@@ -89,8 +93,12 @@ func (p *Provider) ListTools(ctx context.Context) ([]toolregistry.Definition, er
 		if t.Annotations.OpenWorldHint {
 			def.PreviewCapability = toolregistry.PreviewNone
 		}
+		schemas[t.Name] = def.InputSchema
 		out = append(out, def)
 	}
+	p.mu.Lock()
+	p.schemas = schemas
+	p.mu.Unlock()
 	if len(out) == 0 && len(p.cfg.StaticTools) > 0 {
 		return p.cfg.StaticTools, nil
 	}
@@ -134,7 +142,37 @@ func (p *Provider) Execute(ctx context.Context, call toolprovider.Call) (toolpro
 
 func (p *Provider) Preview(ctx context.Context, call toolprovider.Call) (toolprovider.Result, error) {
 	_ = ctx
-	out := map[string]any{"_shadow": true, "_provider": p.cfg.Name, "_tool": call.Tool}
+	p.mu.RLock()
+	schema := p.schemas[call.Tool]
+	catalogSize := len(p.schemas)
+	p.mu.RUnlock()
+	if schema == nil {
+		// Fall back to StaticTools schemas when tools/list was not synced yet.
+		for _, def := range p.cfg.StaticTools {
+			if def.Name == call.Tool {
+				schema = def.InputSchema
+				break
+			}
+		}
+	}
+	if len(schema) > 0 {
+		if err := toolregistry.ValidateInput(schema, call.Input); err != nil {
+			return toolprovider.Result{
+				OK: false, ErrorCode: "SCHEMA_INVALID",
+				Output: map[string]any{"error": err.Error(), "_shadow": true},
+			}, nil
+		}
+	} else if catalogSize > 0 || len(p.cfg.StaticTools) > 0 {
+		// Tool known to catalog but no inputSchema → cannot claim MCP accepts args.
+		return toolprovider.Result{
+			OK: false, ErrorCode: "SCHEMA_UNAVAILABLE",
+			Output: map[string]any{"error": "mcp tool has no inputSchema for preview validation", "_shadow": true},
+		}, nil
+	}
+	out := map[string]any{
+		"_shadow": true, "_provider": p.cfg.Name, "_tool": call.Tool,
+		"_preview": "local_schema_validated",
+	}
 	for k, v := range call.Input {
 		out[k] = v
 	}

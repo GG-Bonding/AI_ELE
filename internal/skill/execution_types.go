@@ -137,6 +137,8 @@ type ExecutionStore interface {
 	UpdateApproval(ctx context.Context, req ApprovalRequest) (ApprovalRequest, error)
 	GetApproval(ctx context.Context, tenantID, id string) (ApprovalRequest, error)
 	GetApprovalByExecution(ctx context.Context, tenantID, executionID string) (ApprovalRequest, error)
+	// ListFailedByVersion returns recent failed/reconcile executions for evidence-based revise.
+	ListFailedByVersion(ctx context.Context, tenantID, skillVersionID string, limit int) ([]Execution, error)
 }
 
 // DurableExecutionStore extends ExecutionStore with crash-recovery operations (V3.3/V3.4).

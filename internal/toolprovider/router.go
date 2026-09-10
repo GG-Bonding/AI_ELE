@@ -147,8 +147,19 @@ func (r *Router) ExecuteToolCall(ctx context.Context, call skillruntime.ToolCall
 	})
 }
 
-// PreviewCall dry-runs via the owning provider.
+// PreviewCall dry-runs via the owning provider after local schema validation.
 func (r *Router) PreviewCall(ctx context.Context, call Call) (skillruntime.ToolResult, error) {
+	if def, ok := r.Registry.Get(call.Tool); ok {
+		if err := toolregistry.ValidateInput(def.InputSchema, call.Input); err != nil {
+			return skillruntime.ToolResult{
+				OK: false, ErrorCode: "SCHEMA_INVALID",
+				Output: map[string]any{"error": err.Error()},
+			}, nil
+		}
+		if def.PreviewCapability == toolregistry.PreviewNone {
+			return skillruntime.ToolResult{OK: false, ErrorCode: "PREVIEW_UNSUPPORTED"}, nil
+		}
+	}
 	p, err := r.providerFor(call.Tool)
 	if err != nil {
 		return skillruntime.ToolResult{}, err
