@@ -127,6 +127,10 @@ func (m *MemoryExecutionStore) CreateStep(ctx context.Context, st skill.StepExec
 	_ = ctx
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createStepLocked(st)
+}
+
+func (m *MemoryExecutionStore) createStepLocked(st skill.StepExecution) (skill.StepExecution, error) {
 	if st.TenantID == "" || st.ExecutionID == "" {
 		return skill.StepExecution{}, fmt.Errorf("%w: tenant_id and execution_id required", skill.ErrInvalidInput)
 	}
@@ -139,6 +143,26 @@ func (m *MemoryExecutionStore) CreateStep(ctx context.Context, st skill.StepExec
 	k := m.key(st.TenantID, st.ExecutionID)
 	m.steps[k] = append(m.steps[k], st)
 	return st, nil
+}
+
+// CreateStepFenced implements skill.DurableExecutionStore.
+func (m *MemoryExecutionStore) CreateStepFenced(ctx context.Context, st skill.StepExecution, expectedEpoch int64) (skill.StepExecution, bool, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ex, ok := m.executions[m.key(st.TenantID, st.ExecutionID)]
+	if !ok {
+		return skill.StepExecution{}, false, skill.ErrNotFound
+	}
+	if ex.LeaseEpoch != expectedEpoch {
+		return st, false, nil
+	}
+	st.LeaseEpoch = expectedEpoch
+	created, err := m.createStepLocked(st)
+	if err != nil {
+		return skill.StepExecution{}, false, err
+	}
+	return created, true, nil
 }
 
 // UpdateStep implements skill.ExecutionStore (V3.4).

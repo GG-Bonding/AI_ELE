@@ -342,7 +342,14 @@ func (r *Runtime) runSteps(
 					StepID: st.ID, Tool: st.Tool, Status: skill.StepSkipped, Sequence: seq,
 					LeaseEpoch: ex.LeaseEpoch,
 				}
-				step, _ = r.Store.CreateStep(runCtx, step)
+				created, okFence, cerr := r.createStepFenced(runCtx, step, ex.LeaseEpoch)
+				if cerr != nil {
+					return ex, steps, cerr
+				}
+				if !okFence {
+					return ex, steps, ErrStaleLease
+				}
+				step = created
 				steps = append(steps, step)
 				ex.StepCursor = i + 1
 				if !r.persistExecutionFenced(runCtx, &ex) {
@@ -370,7 +377,14 @@ func (r *Runtime) runSteps(
 			step.ErrorCode = "TEMPLATE_ERROR"
 			step.DurationMs = nowFn().Sub(stepStart).Milliseconds()
 			step.Output = map[string]any{"error": resolveErr.Error()}
-			step, _ = r.Store.CreateStep(runCtx, step)
+			created, okFence, cerr := r.createStepFenced(runCtx, step, ex.LeaseEpoch)
+			if cerr != nil {
+				return ex, steps, cerr
+			}
+			if !okFence {
+				return ex, steps, ErrStaleLease
+			}
+			step = created
 			steps = append(steps, step)
 			onError := "fail"
 			if st.OnError != nil && strings.TrimSpace(st.OnError.Action) != "" {
@@ -424,13 +438,17 @@ func (r *Runtime) runSteps(
 			step.Output = nil
 			step.LeaseEpoch = ex.LeaseEpoch
 			step.ID = ids()
+			var okFence bool
 			var persistErr error
-			step, persistErr = r.Store.CreateStep(runCtx, step)
+			step, okFence, persistErr = r.createStepFenced(runCtx, step, ex.LeaseEpoch)
 			if persistErr != nil {
 				return ex, steps, persistErr
 			}
+			if !okFence {
+				return ex, steps, ErrStaleLease
+			}
 			step.Status = skill.StepRunning
-			okFence, persistErr := r.updateStepFenced(runCtx, &step, ex.LeaseEpoch)
+			okFence, persistErr = r.updateStepFenced(runCtx, &step, ex.LeaseEpoch)
 			if persistErr != nil {
 				return ex, steps, persistErr
 			}
@@ -674,6 +692,17 @@ func (r *Runtime) updateStepFenced(ctx context.Context, st *skill.StepExecution,
 	}
 	*st = updated
 	return true, nil
+}
+
+func (r *Runtime) createStepFenced(ctx context.Context, st skill.StepExecution, epoch int64) (skill.StepExecution, bool, error) {
+	st.LeaseEpoch = epoch
+	if fenced, ok := r.Store.(interface {
+		CreateStepFenced(context.Context, skill.StepExecution, int64) (skill.StepExecution, bool, error)
+	}); ok {
+		return fenced.CreateStepFenced(ctx, st, epoch)
+	}
+	created, err := r.Store.CreateStep(ctx, st)
+	return created, err == nil, err
 }
 
 func (r *Runtime) touchLease(ex skill.Execution, nowFn func() time.Time) skill.Execution {

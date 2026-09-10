@@ -168,6 +168,18 @@ func TestChaosStepFencingBlocksStaleWriter(t *testing.T) {
 	if ok {
 		t.Fatal("stale step update must be rejected")
 	}
+	staleCreate := skill.StepExecution{
+		ID: "stale-create", ExecutionID: ex.ID, TenantID: "t", StepID: "refund",
+		Tool: "pay.refund", Status: skill.StepSucceeded, Attempt: 2,
+		OperationKey: "e2:refund", LeaseEpoch: 1, Sequence: 2,
+	}
+	_, ok, err = store.CreateStepFenced(ctx, staleCreate, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("stale step create must be rejected")
+	}
 }
 
 func TestChaosRecoverNativeUnknownUsesNextAttempt(t *testing.T) {

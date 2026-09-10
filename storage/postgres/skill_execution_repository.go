@@ -147,6 +147,35 @@ func (r *SkillExecutionRepository) CreateStep(ctx context.Context, st skill.Step
 	return st, nil
 }
 
+func (r *SkillExecutionRepository) CreateStepFenced(ctx context.Context, st skill.StepExecution, expectedEpoch int64) (skill.StepExecution, bool, error) {
+	in, _ := json.Marshal(st.Input)
+	out, _ := json.Marshal(st.Output)
+	if st.Attempt <= 0 {
+		st.Attempt = 1
+	}
+	res, err := r.db.ExecContext(ctx, `
+		INSERT INTO skill_step_executions (
+			id, execution_id, tenant_id, step_id, tool, input, output, status, error_code, duration_ms, sequence,
+			attempt, operation_key, lease_epoch
+		)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
+		WHERE EXISTS (
+			SELECT 1 FROM skill_executions e
+			WHERE e.tenant_id=$3 AND e.id=$2 AND e.lease_epoch=$14
+		)
+	`, st.ID, st.ExecutionID, st.TenantID, st.StepID, st.Tool, in, out, string(st.Status), st.ErrorCode, st.DurationMs, st.Sequence,
+		st.Attempt, st.OperationKey, expectedEpoch)
+	if err != nil {
+		return skill.StepExecution{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return st, false, nil
+	}
+	st.LeaseEpoch = expectedEpoch
+	return st, true, nil
+}
+
 func (r *SkillExecutionRepository) UpdateStep(ctx context.Context, st skill.StepExecution) (skill.StepExecution, error) {
 	in, _ := json.Marshal(st.Input)
 	out, _ := json.Marshal(st.Output)
