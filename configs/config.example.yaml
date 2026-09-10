@@ -62,7 +62,8 @@ skill_runtime:
   allow_tenant_credential_fallback: false
   require_auth_principal: false
 
-# V3.4.1 auth: none (no principal), dev_headers (local only), jwt (HS256 Bearer)
+# V3.4.1/3.4.2 auth: none (no principal), dev_headers (local only), jwt (HS256 Bearer)
 auth:
   mode: none
   jwt_hmac_secret: ""
+  unsafe_dev_mode: false # allow real tool providers without auth (local only)

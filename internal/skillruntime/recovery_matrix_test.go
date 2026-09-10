@@ -162,6 +162,21 @@ max_steps: 1
 
 func TestRecoveryMatrixReconcileApplied(t *testing.T) {
 	t.Parallel()
+	runReconcileMatrix(t, toolprovider.ReconcileApplied, skill.ExecSucceeded, false)
+}
+
+func TestRecoveryMatrixReconcileNotApplied(t *testing.T) {
+	t.Parallel()
+	runReconcileMatrix(t, toolprovider.ReconcileNotApplied, skill.ExecSucceeded, true)
+}
+
+func TestRecoveryMatrixReconcileUnknown(t *testing.T) {
+	t.Parallel()
+	runReconcileMatrix(t, toolprovider.ReconcileUnknown, skill.ExecNeedsReconciliation, false)
+}
+
+func runReconcileMatrix(t *testing.T, state toolprovider.ReconcileState, want skill.ExecutionStatus, wantAttempt2 bool) {
+	t.Helper()
 	ctx := context.Background()
 	tools := toolregistry.Default()
 	def, _ := tools.Get("jira.create_issue")
@@ -169,7 +184,7 @@ func TestRecoveryMatrixReconcileApplied(t *testing.T) {
 	_ = tools.Register(def)
 
 	store := skillruntime.NewMemoryExecutionStore()
-	stub := &reconcileStub{inner: &simulator.JiraProvider{Registry: tools}, state: toolprovider.ReconcileApplied}
+	stub := &reconcileStub{inner: &simulator.JiraProvider{Registry: tools}, state: state}
 	router := toolprovider.NewRouter([]toolprovider.Provider{stub}, tools, nil)
 	_ = router.SyncRegistry(ctx)
 	rt := &skillruntime.Runtime{Tools: tools, Exec: router, Preview: router, Store: store, LeaseOwner: "matrix"}
@@ -189,8 +204,9 @@ max_steps: 1
 	spec, _ := skill.ParseYAML(specYAML)
 	now := time.Now().UTC()
 	until := now.Add(-time.Second)
+	exID := "m-rec-" + string(state)
 	ex, _ := store.CreateExecution(ctx, skill.Execution{
-		ID: "m-reconcile", TenantID: "t", SkillID: "s", SkillVersionID: "v",
+		ID: exID, TenantID: "t", SkillID: "s", SkillVersionID: "v",
 		Mode: skill.ModeLive, Status: skill.ExecRunning, LeaseEpoch: 1,
 		StepCursor: 0, LeaseUntil: &until, Inputs: map[string]any{"project_name": "PAY", "title": "x"},
 		SpecSnapshot: specYAML,
@@ -205,12 +221,31 @@ max_steps: 1
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
-	out, _, err := rt.Recover(ctx, claimed.TenantID, claimed.ID, spec)
+	out, steps, err := rt.Recover(ctx, claimed.TenantID, claimed.ID, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != skill.ExecSucceeded {
-		t.Fatalf("status=%s want SUCCEEDED", out.Status)
+	if out.Status != want {
+		t.Fatalf("status=%s want=%s", out.Status, want)
+	}
+	if wantAttempt2 {
+		found := false
+		for _, st := range steps {
+			if st.Attempt == 2 && st.Status == skill.StepSucceeded &&
+				st.OperationKey == skillruntime.OperationKey(ex.ID, "s1") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("NOT_APPLIED should execute attempt=2 same op key, steps=%+v", steps)
+		}
+	}
+	if state == toolprovider.ReconcileUnknown {
+		for _, st := range steps {
+			if st.Attempt > 1 && st.Status == skill.StepSucceeded {
+				t.Fatal("UNKNOWN must not auto-execute a new attempt")
+			}
+		}
 	}
 }
 

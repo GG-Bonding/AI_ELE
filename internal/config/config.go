@@ -22,10 +22,12 @@ type Config struct {
 	Auth         AuthConfig         `yaml:"auth"`
 }
 
-// AuthConfig selects PrincipalProvider mode (V3.4.1).
+// AuthConfig selects PrincipalProvider mode (V3.4.1 / V3.4.2).
 type AuthConfig struct {
 	Mode          string `yaml:"mode"` // none | dev_headers | jwt
 	JWTHMACSecret string `yaml:"jwt_hmac_secret"`
+	// UnsafeDevMode allows real tool providers without RequireAuthPrincipal (local only).
+	UnsafeDevMode bool `yaml:"unsafe_dev_mode"`
 }
 
 type ServerConfig struct {
@@ -301,6 +303,15 @@ func (c Config) Validate() error {
 	}
 	if c.SkillRuntime.RequireAuthPrincipal && mode == "none" {
 		return fmt.Errorf("skill_runtime.require_auth_principal requires auth.mode=dev_headers|jwt")
+	}
+	toolProv := strings.ToLower(strings.TrimSpace(c.SkillRuntime.ToolProvider))
+	if c.SkillRuntime.Enabled && toolProv != "" && toolProv != "simulator" && !c.Auth.UnsafeDevMode {
+		if !c.SkillRuntime.RequireAuthPrincipal {
+			return fmt.Errorf("skill_runtime.tool_provider=%q requires require_auth_principal=true (or auth.unsafe_dev_mode=true)", c.SkillRuntime.ToolProvider)
+		}
+		if mode == "none" {
+			return fmt.Errorf("skill_runtime.tool_provider=%q requires auth.mode=dev_headers|jwt (or auth.unsafe_dev_mode=true)", c.SkillRuntime.ToolProvider)
+		}
 	}
 	return nil
 }

@@ -113,6 +113,65 @@ skill_runtime:
 	}
 }
 
+func TestNonSimulatorRequiresAuth(t *testing.T) {
+	t.Parallel()
+	path := writeTempConfig(t, `
+database:
+  url: "postgres://aee:aee@localhost:5432/aee?sslmode=disable"
+log:
+  level: info
+  format: json
+skill_runtime:
+  enabled: true
+  tool_provider: mcp
+  mcp_url: "http://127.0.0.1:9"
+  require_auth_principal: false
+auth:
+  mode: none
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected mcp without auth to fail validation")
+	}
+
+	okPath := writeTempConfig(t, `
+database:
+  url: "postgres://aee:aee@localhost:5432/aee?sslmode=disable"
+log:
+  level: info
+  format: json
+skill_runtime:
+  enabled: true
+  tool_provider: mcp
+  mcp_url: "http://127.0.0.1:9"
+  require_auth_principal: true
+auth:
+  mode: jwt
+  jwt_hmac_secret: "dev-secret"
+`)
+	if _, err := config.Load(okPath); err != nil {
+		t.Fatalf("expected valid mcp+jwt config: %v", err)
+	}
+
+	unsafePath := writeTempConfig(t, `
+database:
+  url: "postgres://aee:aee@localhost:5432/aee?sslmode=disable"
+log:
+  level: info
+  format: json
+skill_runtime:
+  enabled: true
+  tool_provider: mcp
+  mcp_url: "http://127.0.0.1:9"
+  require_auth_principal: false
+auth:
+  mode: none
+  unsafe_dev_mode: true
+`)
+	if _, err := config.Load(unsafePath); err != nil {
+		t.Fatalf("unsafe_dev_mode should allow mcp without auth: %v", err)
+	}
+}
+
 func writeTempConfig(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()

@@ -267,9 +267,9 @@ func run() error {
 			if err != nil {
 				return fmt.Errorf("init mcp tool provider: %w", err)
 			}
+			// MCP mode owns the tool catalog exclusively — do not also register simulator
+			// (RejectDuplicateRoutes would fail if MCP exposes jira.* names).
 			providers = append(providers, mcpProv)
-			// Keep simulator tools for local jira.* skills unless MCP replaces them.
-			providers = append(providers, &simulator.JiraProvider{Sim: jirasim.New(), Registry: tools})
 		case "http":
 			return fmt.Errorf("skill_runtime.tool_provider=http is not wired yet; configure endpoints or use tool_provider=simulator|mcp")
 		case "", "simulator":

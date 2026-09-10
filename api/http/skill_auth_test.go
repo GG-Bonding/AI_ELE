@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	httpserver "github.com/agent-experience-engine/agent-experience-engine/api/http"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/auth"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
@@ -32,6 +33,7 @@ func TestRequireAuthPrincipalRejectsSkillRuntimeWithoutHeaders(t *testing.T) {
 			SkillExec:            &skill.ExecutionService{Repo: repo, Store: store, Runner: rt},
 			ToolRegistry:         tools,
 			RequireAuthPrincipal: true,
+			PrincipalProvider:    auth.DevHeaderProvider{},
 		},
 	)
 	h := srv.Handler()
@@ -80,6 +82,7 @@ func TestRequireAuthPrincipalAcceptsTrustedHeaders(t *testing.T) {
 			SkillRepo:            repo,
 			SkillRetriever:       &skill.Retriever{Repo: repo, Tools: toolregistry.Default()},
 			RequireAuthPrincipal: true,
+			PrincipalProvider:    auth.DevHeaderProvider{},
 		},
 	)
 	raw, _ := json.Marshal(map[string]any{"tenant_id": "spoof", "task": "fix jira"})
@@ -91,6 +94,31 @@ func TestRequireAuthPrincipalAcceptsTrustedHeaders(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEmbeddedServerDoesNotTrustHeadersByDefault(t *testing.T) {
+	t.Parallel()
+	repo := skill.NewMemoryRepository()
+	srv := httpserver.New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		stubReady{},
+		httpserver.Options{
+			SkillRepo:            repo,
+			SkillRetriever:       &skill.Retriever{Repo: repo, Tools: toolregistry.Default()},
+			RequireAuthPrincipal: true,
+			// PrincipalProvider intentionally omitted → NoneProvider
+		},
+	)
+	raw, _ := json.Marshal(map[string]any{"tenant_id": "spoof", "task": "t"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/skill-runtime/retrieve", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-AEE-Tenant-ID", "spoof")
+	req.Header.Set("X-AEE-Actor-ID", "boss")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401 (headers must not authenticate by default)", rec.Code)
 	}
 }
 

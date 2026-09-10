@@ -63,3 +63,4 @@ skill_runtime:
 auth:
   mode: none
   jwt_hmac_secret: ""
+  unsafe_dev_mode: false

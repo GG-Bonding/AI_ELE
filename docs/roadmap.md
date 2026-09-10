@@ -142,5 +142,6 @@ Full DoD and architecture: [docs/v2.md](v2.md).
 | **V3.3 Real-world runtime** | ✅ tool providers (MCP/HTTP/sim), durable exec + recovery, LLM revise, selection policy, replay env |
 | **V3.4 Trustworthy execution** | ✅ RecoveryPlanner + fencing + RenewLease + RequireAuthPrincipal |
 | **V3.4.1 Reliability/security patch** | ✅ PENDING≠UNKNOWN, Fail vs Manual, ReconcileResult, terminal fencing, JWT/dev_headers auth |
+| **V3.4.2 Deployment hardening** | ✅ fail-closed default auth, real-provider auth gate, Postgres recovery matrix, MCP-only ownership |
 
 Full architecture and non-goals: [docs/v3.md](v3.md).

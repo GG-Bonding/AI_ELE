@@ -244,8 +244,8 @@ func (s *Server) routes() {
 func (s *Server) Handler() http.Handler {
 	provider := s.principalProvider
 	if provider == nil {
-		// Legacy default for unit tests that omit Auth wiring.
-		provider = auth.DevHeaderProvider{}
+		// Fail closed: raw X-AEE-* headers are never trusted by accident.
+		provider = auth.NoneProvider{}
 	}
 	return s.requestIDMiddleware(auth.Middleware(provider)(s.mux))
 }
