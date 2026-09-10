@@ -84,8 +84,12 @@ func (s *Server) handleCompileSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, "")
+	if !ok {
+		return
+	}
 	sk, ver, rep, err := s.skillRegistry.CompileAndCreate(
-		r.Context(), req.TenantID, req.Name, req.Description, req.PatternID, req.SpecYAML, req.Confidence, req.Utility,
+		r.Context(), tenantID, req.Name, req.Description, req.PatternID, req.SpecYAML, req.Confidence, req.Utility,
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -106,7 +110,10 @@ func (s *Server) handleShadowSkillVersion(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
 		return
 	}
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, r.URL.Query().Get("tenant_id"), "")
+	if !ok {
+		return
+	}
 	ver, err := s.skillRegistry.MoveToShadow(r.Context(), tenantID, r.PathValue("version_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -120,7 +127,10 @@ func (s *Server) handleActivateSkillVersion(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
 		return
 	}
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, r.URL.Query().Get("tenant_id"), "")
+	if !ok {
+		return
+	}
 	ver, err := s.skillRegistry.Activate(r.Context(), tenantID, r.PathValue("version_id"), s.skillPromote)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -131,12 +141,8 @@ func (s *Server) handleActivateSkillVersion(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) resolveRuntimeIdentity(w http.ResponseWriter, r *http.Request, bodyTenant, bodyActor string) (tenantID, actorID string, ok bool) {
 	if p, found := auth.FromContext(r.Context()); found {
-		tenantID = p.TenantID
-		if tenantID == "" {
-			tenantID = strings.TrimSpace(bodyTenant)
-		}
-		actorID = p.ActorID
-		return tenantID, actorID, true
+		// Trusted principal always wins; body tenant_id / requester_id / approved_by are ignored.
+		return strings.TrimSpace(p.TenantID), strings.TrimSpace(p.ActorID), true
 	}
 	if s.requireAuthPrincipal {
 		writeError(w, http.StatusUnauthorized, "authenticated principal required")
@@ -272,12 +278,16 @@ func (s *Server) handleRetrieveSkills(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, "")
+	if !ok {
+		return
+	}
 	retriever := s.skillRetriever
 	if retriever == nil {
 		retriever = &skill.Retriever{Repo: s.skillRepo, Tools: tools}
 	}
 	ranked, err := retriever.Retrieve(r.Context(), skill.RetrieveQuery{
-		TenantID: req.TenantID, Task: req.Task, Tools: req.Tools, TopK: req.TopK,
+		TenantID: tenantID, Task: req.Task, Tools: req.Tools, TopK: req.TopK,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -291,18 +301,18 @@ func (s *Server) handleRetrieveSkills(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(selectMode, "thompson") || strings.EqualFold(selectMode, "policy") ||
 		strings.EqualFold(selectMode, "greedy") || strings.EqualFold(selectMode, "epsilon_greedy") {
 		var picked skill.RankedSkill
-		var ok bool
+		var selected bool
 		switch strings.ToLower(selectMode) {
 		case "thompson":
-			picked, ok = skill.SelectThompson(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+			picked, selected = skill.SelectThompson(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
 		case "greedy":
-			picked, ok = skill.GreedyPolicy{}.Select(ranked, nil)
+			picked, selected = skill.GreedyPolicy{}.Select(ranked, nil)
 		case "epsilon_greedy":
-			picked, ok = skill.EpsilonGreedyPolicy{Epsilon: 0.1}.Select(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+			picked, selected = skill.EpsilonGreedyPolicy{Epsilon: 0.1}.Select(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
 		default:
-			picked, ok = retriever.Select(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
+			picked, selected = retriever.Select(ranked, rand.New(rand.NewSource(time.Now().UnixNano())))
 		}
-		if ok {
+		if selected {
 			out["selected"] = picked
 		}
 	}
@@ -381,10 +391,14 @@ func (s *Server) handleCompareShadowAB(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, "")
+	if !ok {
+		return
+	}
 	result := skill.CompareShadowAB(req.VersionAID, req.VersionBID, req.TrialsA, req.TrialsB, req.MinTrials)
 	out := map[string]any{"result": result}
 	if req.Promote && result.WinnerID != "" {
-		ver, err := skill.PromoteABWinner(r.Context(), s.skillRegistry, req.TenantID, result.WinnerID, s.skillPromote)
+		ver, err := skill.PromoteABWinner(r.Context(), s.skillRegistry, tenantID, result.WinnerID, s.skillPromote)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
