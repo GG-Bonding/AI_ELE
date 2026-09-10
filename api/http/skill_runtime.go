@@ -46,6 +46,7 @@ type reviseSkillRequest struct {
 	SkillID         string   `json:"skill_id"`
 	VersionID       string   `json:"version_id"`
 	PatternID       string   `json:"pattern_id"`
+	ExecutionID     string   `json:"execution_id"`
 	FailureCodes    []string `json:"failure_codes"`
 	FailureMessages []string `json:"failure_messages"`
 	PatternContent  string   `json:"pattern_content"`
@@ -128,6 +129,22 @@ func (s *Server) handleActivateSkillVersion(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, ver)
 }
 
+func (s *Server) resolveRuntimeIdentity(w http.ResponseWriter, r *http.Request, bodyTenant, bodyActor string) (tenantID, actorID string, ok bool) {
+	if p, found := auth.FromContext(r.Context()); found {
+		tenantID = p.TenantID
+		if tenantID == "" {
+			tenantID = strings.TrimSpace(bodyTenant)
+		}
+		actorID = p.ActorID
+		return tenantID, actorID, true
+	}
+	if s.requireAuthPrincipal {
+		writeError(w, http.StatusUnauthorized, "authenticated principal required")
+		return "", "", false
+	}
+	return strings.TrimSpace(bodyTenant), strings.TrimSpace(bodyActor), true
+}
+
 func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
 	if s.skillExec == nil {
 		writeError(w, http.StatusServiceUnavailable, "skill runtime not enabled")
@@ -142,13 +159,9 @@ func (s *Server) handleExecuteSkill(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = skill.ModeShadow
 	}
-	requesterID := req.RequesterID
-	tenantID := req.TenantID
-	if p, ok := auth.FromContext(r.Context()); ok {
-		requesterID = p.ActorID
-		if p.TenantID != "" {
-			tenantID = p.TenantID
-		}
+	tenantID, requesterID, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, req.RequesterID)
+	if !ok {
+		return
 	}
 	ex, steps, err := s.skillExec.Execute(r.Context(), skill.ExecuteInput{
 		TenantID:       tenantID,
@@ -179,7 +192,11 @@ func (s *Server) handleResumeSkillExecution(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	ex, steps, err := s.skillExec.Resume(r.Context(), req.TenantID, r.PathValue("execution_id"), req.AvailableTools, true)
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, "")
+	if !ok {
+		return
+	}
+	ex, steps, err := s.skillExec.Resume(r.Context(), tenantID, r.PathValue("execution_id"), req.AvailableTools, true)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -197,14 +214,11 @@ func (s *Server) handleApproveSkillApproval(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	approvedBy := firstNonEmpty(req.ApprovedBy, req.ActorID)
-	tenantID := req.TenantID
-	if p, ok := auth.FromContext(r.Context()); ok {
-		// Trusted principal wins — body approved_by is ignored (anti-spoof).
-		approvedBy = p.ActorID
-		if p.TenantID != "" {
-			tenantID = p.TenantID
-		}
+	tenantID, approvedBy, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, firstNonEmpty(req.ApprovedBy, req.ActorID))
+	if !ok {
+		return
+	}
+	if p, found := auth.FromContext(r.Context()); found {
 		if s.requireSeparateApprover && !p.CanApprove() {
 			writeError(w, http.StatusForbidden, "principal lacks skill:approve permission")
 			return
@@ -232,7 +246,11 @@ func (s *Server) handleRejectSkillApproval(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	appr, err := s.skillExec.RejectApproval(r.Context(), req.TenantID, r.PathValue("approval_id"), req.Reason)
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, "")
+	if !ok {
+		return
+	}
+	appr, err := s.skillExec.RejectApproval(r.Context(), tenantID, r.PathValue("approval_id"), req.Reason)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -310,7 +328,29 @@ func (s *Server) handleReviseSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	ver, err := s.skillRepo.GetVersion(r.Context(), req.TenantID, req.VersionID)
+	tenantID, _, ok := s.resolveRuntimeIdentity(w, r, req.TenantID, "")
+	if !ok {
+		return
+	}
+	if s.skillRevise != nil {
+		if strings.TrimSpace(req.ExecutionID) != "" {
+			rev, proposal, did, err := s.skillRevise.ReviseFromExecution(r.Context(), tenantID, req.ExecutionID, req.PatternID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"revised": did, "version": rev, "proposal": proposal})
+			return
+		}
+		rev, proposal, did, err := s.skillRevise.ReviseFromVersion(r.Context(), tenantID, req.VersionID, req.PatternID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"revised": did, "version": rev, "proposal": proposal})
+		return
+	}
+	ver, err := s.skillRepo.GetVersion(r.Context(), tenantID, req.VersionID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -319,7 +359,7 @@ func (s *Server) handleReviseSkill(w http.ResponseWriter, r *http.Request) {
 	if skillID == "" {
 		skillID = ver.SkillID
 	}
-	rev, ok, err := skill.AutoRevise(r.Context(), s.skillRepo, req.TenantID, skillID, req.PatternID, ver.Spec, skill.RevisionHint{
+	rev, okRevise, err := skill.AutoRevise(r.Context(), s.skillRepo, tenantID, skillID, req.PatternID, ver.Spec, skill.RevisionHint{
 		FailureCodes:    req.FailureCodes,
 		FailureMessages: req.FailureMessages,
 		PatternContent:  req.PatternContent,
@@ -328,7 +368,7 @@ func (s *Server) handleReviseSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revised": ok, "version": rev})
+	writeJSON(w, http.StatusOK, map[string]any{"revised": okRevise, "version": rev})
 }
 
 func (s *Server) handleCompareShadowAB(w http.ResponseWriter, r *http.Request) {

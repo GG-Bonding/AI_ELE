@@ -77,13 +77,18 @@ func (m *MemoryExecutionStore) CreateExecution(ctx context.Context, ex skill.Exe
 }
 
 // UpdateExecution implements skill.ExecutionStore.
+// While status is RUNNING, callers must use UpdateExecutionFenced (V3.4).
 func (m *MemoryExecutionStore) UpdateExecution(ctx context.Context, ex skill.Execution) (skill.Execution, error) {
 	_ = ctx
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := m.key(ex.TenantID, ex.ID)
-	if _, ok := m.executions[k]; !ok {
+	cur, ok := m.executions[k]
+	if !ok {
 		return skill.Execution{}, skill.ErrNotFound
+	}
+	if cur.Status == skill.ExecRunning {
+		return skill.Execution{}, fmt.Errorf("%w: use UpdateExecutionFenced while RUNNING", skill.ErrInvalidTransition)
 	}
 	m.executions[k] = ex
 	return ex, nil
@@ -151,6 +156,57 @@ func (m *MemoryExecutionStore) UpdateStep(ctx context.Context, st skill.StepExec
 		}
 	}
 	return skill.StepExecution{}, skill.ErrNotFound
+}
+
+// UpdateStepFenced implements skill.DurableExecutionStore.
+func (m *MemoryExecutionStore) UpdateStepFenced(ctx context.Context, st skill.StepExecution, expectedEpoch int64) (skill.StepExecution, bool, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ex, ok := m.executions[m.key(st.TenantID, st.ExecutionID)]
+	if !ok {
+		return skill.StepExecution{}, false, skill.ErrNotFound
+	}
+	if ex.LeaseEpoch != expectedEpoch {
+		return st, false, nil
+	}
+	k := m.key(st.TenantID, st.ExecutionID)
+	list := m.steps[k]
+	for i := range list {
+		if list[i].ID == st.ID {
+			st.LeaseEpoch = expectedEpoch
+			list[i] = st
+			m.steps[k] = list
+			return st, true, nil
+		}
+	}
+	return skill.StepExecution{}, false, skill.ErrNotFound
+}
+
+// RenewLease implements skill.DurableExecutionStore.
+func (m *MemoryExecutionStore) RenewLease(ctx context.Context, tenantID, executionID, owner string, expectedEpoch int64, until time.Time) (bool, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := m.key(tenantID, executionID)
+	ex, ok := m.executions[k]
+	if !ok {
+		return false, skill.ErrNotFound
+	}
+	if ex.LeaseEpoch != expectedEpoch {
+		return false, nil
+	}
+	if owner != "" && ex.LeaseOwner != "" && ex.LeaseOwner != owner {
+		return false, nil
+	}
+	now := m.now()
+	ex.LeaseUntil = &until
+	ex.HeartbeatAt = &now
+	if owner != "" {
+		ex.LeaseOwner = owner
+	}
+	m.executions[k] = ex
+	return true, nil
 }
 
 // ListSteps implements skill.ExecutionStore.
@@ -375,6 +431,7 @@ func (m *MemoryExecutionStore) UpdateExecutionFenced(ctx context.Context, ex ski
 	if cur.LeaseEpoch != expectedEpoch {
 		return cur, false, nil
 	}
+	ex.LeaseEpoch = expectedEpoch
 	m.executions[k] = ex
 	return ex, true, nil
 }

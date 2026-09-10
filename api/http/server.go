@@ -18,6 +18,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/feedback"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/retrieval"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skillrevise"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolregistry"
 	"github.com/agent-experience-engine/agent-experience-engine/storage/postgres"
@@ -130,6 +131,8 @@ type Server struct {
 	skillPromote            skill.PromoteConfig
 	skillRetriever          *skill.Retriever
 	requireSeparateApprover bool
+	requireAuthPrincipal    bool
+	skillRevise             *skillrevise.Service
 	mux                     *http.ServeMux
 }
 
@@ -155,6 +158,8 @@ type Options struct {
 	SkillPromote            skill.PromoteConfig
 	SkillRetriever          *skill.Retriever
 	RequireSeparateApprover bool
+	RequireAuthPrincipal    bool
+	SkillRevise             *skillrevise.Service
 }
 
 // New constructs an HTTP server with health and episode endpoints.
@@ -180,6 +185,8 @@ func New(logger *slog.Logger, ready ReadyChecker, opts Options) *Server {
 		skillPromote:            opts.SkillPromote,
 		skillRetriever:          opts.SkillRetriever,
 		requireSeparateApprover: opts.RequireSeparateApprover,
+		requireAuthPrincipal:    opts.RequireAuthPrincipal,
+		skillRevise:             opts.SkillRevise,
 		mux:                     http.NewServeMux(),
 	}
 	s.routes()

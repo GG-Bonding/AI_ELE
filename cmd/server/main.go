@@ -31,6 +31,7 @@ import (
 	"github.com/agent-experience-engine/agent-experience-engine/internal/selector"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skill"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillexec"
+	"github.com/agent-experience-engine/agent-experience-engine/internal/skillrevise"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillruntime"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/skillvalidator"
 	"github.com/agent-experience-engine/agent-experience-engine/internal/toolprovider"
@@ -268,8 +269,12 @@ func run() error {
 			providers = append(providers, mcpProv)
 			// Keep simulator tools for local jira.* skills unless MCP replaces them.
 			providers = append(providers, &simulator.JiraProvider{Sim: jirasim.New(), Registry: tools})
-		default:
+		case "http":
+			return fmt.Errorf("skill_runtime.tool_provider=http is not wired yet; configure endpoints or use tool_provider=simulator|mcp")
+		case "", "simulator":
 			providers = append(providers, &simulator.JiraProvider{Sim: jirasim.New(), Registry: tools})
+		default:
+			return fmt.Errorf("unsupported skill_runtime.tool_provider %q (want simulator|mcp|http)", cfg.SkillRuntime.ToolProvider)
 		}
 		creds := credential.Chain{
 			credential.NewMapResolver(credential.Options{
@@ -305,6 +310,7 @@ func run() error {
 		opts.SkillRuntime = rt
 		opts.SkillPromote = promote
 		opts.RequireSeparateApprover = cfg.SkillRuntime.RequireSeparateApprover
+		opts.RequireAuthPrincipal = cfg.SkillRuntime.RequireAuthPrincipal
 		opts.SkillExec = &skill.ExecutionService{
 			Repo:     skillAssetRepo,
 			Store:    execRepo,
@@ -316,6 +322,13 @@ func run() error {
 			Repo: skillAssetRepo, Tools: tools, Embedder: skillEmbedder,
 			Policy: skill.ParseSelectionPolicy(cfg.SkillRuntime.SelectionPolicy),
 		}
+		reviseSvc := &skillrevise.Service{Repo: skillAssetRepo, ExecStore: execRepo, Tools: tools}
+		if llm != nil {
+			if reviser, err := skillrevise.NewLLMReviser(llm); err == nil {
+				reviseSvc.LLM = reviser
+			}
+		}
+		opts.SkillRevise = reviseSvc
 		recovery := &skillexec.RecoveryWorker{
 			Store: execRepo, Runtime: rt, Owner: "server-recovery",
 			LeaseTTL: cfg.SkillRuntime.ExecutionLeaseTTL, Logger: logger,
@@ -326,9 +339,10 @@ func run() error {
 			logger.Info("recovered stale skill executions", "count", n)
 		}
 		go recovery.RunLoop(workerCtx, cfg.SkillRuntime.RecoveryInterval)
-		logger.Info("skill runtime feature gate enabled (V3.3)",
+		logger.Info("skill runtime feature gate enabled (V3.4)",
 			"tool_provider", cfg.SkillRuntime.ToolProvider,
 			"selection_policy", cfg.SkillRuntime.SelectionPolicy,
+			"require_auth_principal", cfg.SkillRuntime.RequireAuthPrincipal,
 			"semantic_retrieve", skillEmbedder != nil)
 	} else {
 		logger.Info("skill runtime feature gate disabled; V2 skill candidates remain advisory only")

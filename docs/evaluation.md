@@ -143,4 +143,4 @@ go test ./internal/skillexec/ -run TestRecoveryContinuesFromStepCursor -v
 go test ./internal/skillruntime/chaos/ -v
 ```
 
-Covers: stable operation key, credential isolation, lease fencing, step attempt ledger.
+Covers: stable operation key, credential isolation, lease/step fencing, RecoveryPlanner NATIVE retry vs NONE → NEEDS_RECONCILIATION.

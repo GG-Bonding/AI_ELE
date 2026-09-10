@@ -146,6 +146,10 @@ type DurableExecutionStore interface {
 	ClaimExecutionLease(ctx context.Context, tenantID, executionID, owner string, until time.Time) (Execution, bool, error)
 	// UpdateExecutionFenced updates only when lease_epoch matches expectedEpoch (fencing).
 	UpdateExecutionFenced(ctx context.Context, ex Execution, expectedEpoch int64) (Execution, bool, error)
+	// UpdateStepFenced updates a step only when lease_epoch matches (V3.4 closeout).
+	UpdateStepFenced(ctx context.Context, st StepExecution, expectedEpoch int64) (StepExecution, bool, error)
+	// RenewLease extends lease_until without rewriting business fields (heartbeat).
+	RenewLease(ctx context.Context, tenantID, executionID, owner string, expectedEpoch int64, until time.Time) (bool, error)
 }
 
 // LearningStore persists skill learning events.

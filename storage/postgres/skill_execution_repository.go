@@ -58,19 +58,27 @@ func (r *SkillExecutionRepository) CreateExecution(ctx context.Context, ex skill
 
 func (r *SkillExecutionRepository) UpdateExecution(ctx context.Context, ex skill.Execution) (skill.Execution, error) {
 	out, _ := json.Marshal(ex.Outputs)
+	// Refuse unfenced mutation while RUNNING (V3.4) — lease_epoch is not rewritten here either.
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE skill_executions
 		SET status=$3, outputs=$4, error_code=$5, error_message=$6, completed_at=$7,
 		    step_cursor=$8, lease_owner=$9, lease_until=$10, heartbeat_at=$11,
-		    requester_id=$12, spec_snapshot=$13, lease_epoch=$14
-		WHERE tenant_id=$1 AND id=$2
+		    requester_id=$12, spec_snapshot=$13
+		WHERE tenant_id=$1 AND id=$2 AND status <> 'RUNNING'
 	`, ex.TenantID, ex.ID, string(ex.Status), out, ex.ErrorCode, ex.ErrorMessage, ex.CompletedAt,
-		ex.StepCursor, ex.LeaseOwner, ex.LeaseUntil, ex.HeartbeatAt, ex.RequesterID, ex.SpecSnapshot, ex.LeaseEpoch)
+		ex.StepCursor, ex.LeaseOwner, ex.LeaseUntil, ex.HeartbeatAt, ex.RequesterID, ex.SpecSnapshot)
 	if err != nil {
 		return skill.Execution{}, err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		cur, getErr := r.GetExecution(ctx, ex.TenantID, ex.ID)
+		if getErr != nil {
+			return skill.Execution{}, getErr
+		}
+		if cur.Status == skill.ExecRunning {
+			return skill.Execution{}, fmt.Errorf("%w: use UpdateExecutionFenced while RUNNING", skill.ErrInvalidTransition)
+		}
 		return skill.Execution{}, skill.ErrNotFound
 	}
 	return ex, nil
@@ -155,6 +163,41 @@ func (r *SkillExecutionRepository) UpdateStep(ctx context.Context, st skill.Step
 		return skill.StepExecution{}, skill.ErrNotFound
 	}
 	return st, nil
+}
+
+func (r *SkillExecutionRepository) UpdateStepFenced(ctx context.Context, st skill.StepExecution, expectedEpoch int64) (skill.StepExecution, bool, error) {
+	in, _ := json.Marshal(st.Input)
+	out, _ := json.Marshal(st.Output)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE skill_step_executions s
+		SET input=$4, output=$5, status=$6, error_code=$7, duration_ms=$8, attempt=$9, operation_key=$10, lease_epoch=$11
+		FROM skill_executions e
+		WHERE s.tenant_id=$1 AND s.execution_id=$2 AND s.id=$3
+		  AND e.tenant_id=s.tenant_id AND e.id=s.execution_id
+		  AND e.lease_epoch=$11
+	`, st.TenantID, st.ExecutionID, st.ID, in, out, string(st.Status), st.ErrorCode, st.DurationMs, st.Attempt, st.OperationKey, expectedEpoch)
+	if err != nil {
+		return skill.StepExecution{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return st, false, nil
+	}
+	st.LeaseEpoch = expectedEpoch
+	return st, true, nil
+}
+
+func (r *SkillExecutionRepository) RenewLease(ctx context.Context, tenantID, executionID, owner string, expectedEpoch int64, until time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE skill_executions
+		SET lease_until=$4, heartbeat_at=NOW(), lease_owner=COALESCE(NULLIF($3,''), lease_owner)
+		WHERE tenant_id=$1 AND id=$2 AND lease_epoch=$5 AND status='RUNNING'
+	`, tenantID, executionID, owner, until, expectedEpoch)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (r *SkillExecutionRepository) ListSteps(ctx context.Context, tenantID, executionID string) ([]skill.StepExecution, error) {
