@@ -76,17 +76,30 @@ func (p RecoveryPlanner) Plan(ex skill.Execution, spec skill.Spec, steps []skill
 		if st.Retry != nil && st.Retry.MaxAttempts > 1 {
 			maxAttempts = st.Retry.MaxAttempts
 		}
+		onError := "fail"
+		if st.OnError != nil && strings.TrimSpace(st.OnError.Action) != "" {
+			onError = strings.ToLower(strings.TrimSpace(st.OnError.Action))
+		}
 		next := last.Attempt + 1
-		if next <= maxAttempts {
+		if next <= maxAttempts && (onError == "retry" || st.Retry != nil) {
 			plan.Decision = RecoveryRetry
 			plan.NextAttempt = next
 			plan.Reason = fmt.Sprintf("last attempt failed; retry %d/%d", next, maxAttempts)
 			return plan
 		}
+		if onError == "continue" {
+			plan.Decision = RecoveryContinue
+			plan.Reason = "last attempt failed with on_error=continue"
+			return plan
+		}
 		plan.Decision = RecoveryAbort
-		plan.Reason = fmt.Sprintf("retries exhausted after attempt %d", last.Attempt)
+		plan.Reason = fmt.Sprintf("step failed permanently after attempt %d", last.Attempt)
 		return plan
 	case skill.StepUnknownOutcome, skill.StepRunning, skill.StepPending:
+		opKey := last.OperationKey
+		if opKey == "" {
+			opKey = OperationKey(ex.ID, st.ID)
+		}
 		switch cap {
 		case toolregistry.IdempotencyNative:
 			plan.Decision = RecoveryRetry
@@ -94,15 +107,15 @@ func (p RecoveryPlanner) Plan(ex skill.Execution, spec skill.Spec, steps []skill
 			if plan.NextAttempt < 2 {
 				plan.NextAttempt = 2
 			}
-			plan.Reason = "UNKNOWN with NATIVE idempotency; safe same operation_key retry"
+			plan.Reason = fmt.Sprintf("UNKNOWN with NATIVE idempotency; retry attempt=%d op=%s", plan.NextAttempt, opKey)
 			return plan
 		case toolregistry.IdempotencyQueryReconcile:
 			plan.Decision = RecoveryReconcile
-			plan.Reason = "UNKNOWN requires provider reconcile"
+			plan.Reason = fmt.Sprintf("UNKNOWN requires provider reconcile op=%s", opKey)
 			return plan
 		default:
 			plan.Decision = RecoveryAbort
-			plan.Reason = "UNKNOWN on non-idempotent tool; needs human/provider reconciliation"
+			plan.Reason = fmt.Sprintf("UNKNOWN on non-idempotent tool op=%s; needs human/provider reconciliation", opKey)
 			return plan
 		}
 	default:

@@ -788,20 +788,27 @@ func (r *Runtime) Recover(ctx context.Context, tenantID, executionID string, spe
 	case RecoveryAbort:
 		return r.needsReconciliation(ctx, ex, existing, "NEEDS_RECONCILIATION", plan.Reason, nowFn)
 	case RecoveryReconcile:
-		// Optional provider reconcile; if unavailable → hold.
+		opKey := plan.LastStep.OperationKey
+		if opKey == "" {
+			opKey = OperationKey(ex.ID, plan.LastStep.StepID)
+		}
 		if rec, ok := r.Exec.(interface {
 			Reconcile(context.Context, ToolCall) (ToolResult, error)
 		}); ok && plan.LastStep.ID != "" {
 			res, rerr := rec.Reconcile(ctx, ToolCall{
 				Tool: plan.Tool, Input: plan.LastStep.Input,
-				IdempotencyKey: plan.LastStep.OperationKey,
+				IdempotencyKey: opKey,
 				TenantID:       ex.TenantID, PrincipalID: ex.RequesterID,
 				ExecutionID: ex.ID, StepID: plan.LastStep.StepID, Attempt: plan.LastStep.Attempt,
 			})
 			if rerr == nil && res.OK && !res.Unknown {
 				plan.LastStep.Status = skill.StepSucceeded
 				plan.LastStep.Output = res.Output
-				_, _ = r.updateStepFenced(ctx, &plan.LastStep, ex.LeaseEpoch)
+				plan.LastStep.ErrorCode = ""
+				okFence, _ := r.updateStepFenced(ctx, &plan.LastStep, ex.LeaseEpoch)
+				if !okFence {
+					return ex, existing, ErrStaleLease
+				}
 				ex.StepCursor++
 				if !r.persistExecutionFenced(ctx, &ex) {
 					return ex, existing, ErrStaleLease

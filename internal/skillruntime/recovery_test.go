@@ -54,18 +54,31 @@ func TestRecoveryPlannerSucceededContinues(t *testing.T) {
 	}
 }
 
+func TestRecoveryPlannerFailedWithoutRetryAborts(t *testing.T) {
+	t.Parallel()
+	spec := skill.Spec{Steps: []skill.SkillStep{{ID: "s1", Tool: "jira.search_projects"}}}
+	ex := skill.Execution{StepCursor: 0}
+	steps := []skill.StepExecution{{
+		ID: "a1", StepID: "s1", Status: skill.StepFailed, Attempt: 1,
+	}}
+	plan := RecoveryPlanner{Tools: toolregistry.Default()}.Plan(ex, spec, steps)
+	if plan.Decision != RecoveryAbort {
+		t.Fatalf("want ABORT without retry policy, got %+v", plan)
+	}
+}
+
 func TestRecoveryPlannerFailedRespectsRetryPolicy(t *testing.T) {
 	t.Parallel()
 	spec := skill.Spec{Steps: []skill.SkillStep{{
 		ID: "s1", Tool: "jira.search_projects",
-		Retry: &skill.RetryPolicy{MaxAttempts: 2},
+		Retry: &skill.RetryPolicy{MaxAttempts: 3},
 	}}}
 	ex := skill.Execution{StepCursor: 0}
 	steps := []skill.StepExecution{{
-		ID: "a1", StepID: "s1", Status: skill.StepFailed, Attempt: 2,
+		ID: "a1", StepID: "s1", Status: skill.StepFailed, Attempt: 1,
 	}}
 	plan := RecoveryPlanner{Tools: toolregistry.Default()}.Plan(ex, spec, steps)
-	if plan.Decision != RecoveryAbort {
-		t.Fatalf("want ABORT after exhausted retries, got %+v", plan)
+	if plan.Decision != RecoveryRetry || plan.NextAttempt != 2 {
+		t.Fatalf("want RETRY 2, got %+v", plan)
 	}
 }

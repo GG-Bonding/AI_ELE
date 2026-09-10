@@ -170,6 +170,32 @@ func (r *Router) PreviewToolCall(ctx context.Context, call skillruntime.ToolCall
 	})
 }
 
+// Reconcile resolves UNKNOWN outcomes when a provider supports QUERY_RECONCILE.
+func (r *Router) Reconcile(ctx context.Context, call skillruntime.ToolCall) (skillruntime.ToolResult, error) {
+	p, err := r.providerFor(call.Tool)
+	if err != nil {
+		return skillruntime.ToolResult{}, err
+	}
+	tpCall := Call{
+		Tool: call.Tool, Input: call.Input, IdempotencyKey: call.IdempotencyKey,
+		TenantID: call.TenantID, PrincipalID: call.PrincipalID,
+		ExecutionID: call.ExecutionID, StepID: call.StepID, Attempt: call.Attempt,
+	}
+	tpCall, err = r.enrich(ctx, tpCall)
+	if err != nil {
+		return skillruntime.ToolResult{}, err
+	}
+	if rec, ok := p.(interface {
+		Reconcile(context.Context, Call) (Result, error)
+	}); ok {
+		res, rerr := rec.Reconcile(ctx, tpCall)
+		return toRuntime(res), rerr
+	}
+	return skillruntime.ToolResult{OK: false, ErrorCode: "RECONCILE_UNSUPPORTED", Unknown: true}, nil
+}
+
 func toRuntime(res Result) skillruntime.ToolResult {
-	return skillruntime.ToolResult{OK: res.OK, ErrorCode: res.ErrorCode, Output: res.Output, Unknown: res.Unknown}
+	return skillruntime.ToolResult{
+		OK: res.OK, ErrorCode: res.ErrorCode, Output: res.Output, Unknown: res.Unknown,
+	}
 }
